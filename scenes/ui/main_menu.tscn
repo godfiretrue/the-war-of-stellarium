@@ -1,0 +1,69 @@
+[gd_scene format=3 uid="uid://diqvyj2jhixt8"]
+
+[ext_resource type="Script" uid="uid://c58ssjek2wtk5" path="res://scripts/ui/main_menu.gd" id="1_sl1te"]
+
+[node name="MainMenu" type="Control" unique_id=475477524]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_sl1te")
+
+[node name="Background" type="ColorRect" parent="." unique_id=1793396292]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.0627451, 0.07058824, 0.09411765, 1)
+
+[node name="Center" type="CenterContainer" parent="Background" unique_id=198163968]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="Box" type="VBoxContainer" parent="Background/Center" unique_id=626447008]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="Background/Center/Box" unique_id=244763295]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9098039, 0.89411765, 0.84705883, 1)
+theme_override_font_sizes/font_size = 40
+text = "The Final War of Stellarium"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="Background/Center/Box" unique_id=1249697600]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6039216, 0.627451, 0.6784314, 1)
+theme_override_font_sizes/font_size = 15
+text = "Humans vs Elves — conquest of seven provinces"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="Background/Center/Box" unique_id=181417183]
+custom_minimum_size = Vector2(0, 14)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="NewGame" type="Button" parent="Background/Center/Box" unique_id=1308097927]
+custom_minimum_size = Vector2(280, 46)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "New Game"
+
+[node name="Continue" type="Button" parent="Background/Center/Box" unique_id=2064199324]
+custom_minimum_size = Vector2(280, 46)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Continue"
+
+[node name="Quit" type="Button" parent="Background/Center/Box" unique_id=1144835376]
+custom_minimum_size = Vector2(280, 46)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Quit"
+
+[node name="Status" type="Label" parent="Background/Center/Box" unique_id=345939331]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7882353, 0.627451, 0.41568628, 1)
+theme_override_font_sizes/font_size = 12
+horizontal_alignment = 1

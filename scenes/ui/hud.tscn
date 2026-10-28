@@ -1,0 +1,148 @@
+[gd_scene format=3 uid="uid://b8qq7wh0l1dft"]
+
+[ext_resource type="Script" uid="uid://cilg6x0xukmat" path="res://scripts/ui/hud.gd" id="1_0mwgc"]
+
+[node name="HUD" type="CanvasLayer" unique_id=480278888]
+script = ExtResource("1_0mwgc")
+
+[node name="Root" type="Control" parent="." unique_id=540279485]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="TopStrip" type="ColorRect" parent="Root" unique_id=592251364]
+layout_mode = 0
+anchor_right = 1.0
+offset_bottom = 46.0
+mouse_filter = 2
+color = Color(0.043137256, 0.050980393, 0.07058824, 0.9019608)
+
+[node name="TopRow" type="HBoxContainer" parent="Root/TopStrip" unique_id=987201053]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 18.0
+offset_top = 6.0
+offset_right = -18.0
+offset_bottom = -6.0
+mouse_filter = 2
+theme_override_constants/separation = 26
+
+[node name="Title" type="Label" parent="Root/TopStrip/TopRow" unique_id=2006125206]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.9019608, 0.9098039, 0.9411765, 1)
+theme_override_font_sizes/font_size = 16
+text = "The Final War of Stellarium"
+vertical_alignment = 1
+
+[node name="Gold" type="Label" parent="Root/TopStrip/TopRow" unique_id=278843940]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9098039, 0.76862746, 0.41568628, 1)
+theme_override_font_sizes/font_size = 15
+text = "Gold 0"
+vertical_alignment = 1
+
+[node name="Manpower" type="Label" parent="Root/TopStrip/TopRow" unique_id=2081387228]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.56078434, 0.78039217, 0.9098039, 1)
+theme_override_font_sizes/font_size = 15
+text = "Manpower 0"
+vertical_alignment = 1
+
+[node name="Resource" type="Label" parent="Root/TopStrip/TopRow" unique_id=1977137837]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7882353, 0.6509804, 0.9098039, 1)
+theme_override_font_sizes/font_size = 15
+text = "Aether 0"
+vertical_alignment = 1
+
+[node name="Turn" type="Label" parent="Root/TopStrip/TopRow" unique_id=1727576550]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9019608, 0.9098039, 0.9411765, 1)
+theme_override_font_sizes/font_size = 15
+text = "Turn 1"
+vertical_alignment = 1
+
+[node name="BottomStrip" type="ColorRect" parent="Root" unique_id=1585972314]
+layout_mode = 0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -122.0
+mouse_filter = 2
+color = Color(0.043137256, 0.050980393, 0.07058824, 0.9019608)
+
+[node name="BottomRow" type="HBoxContainer" parent="Root/BottomStrip" unique_id=1464028342]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 18.0
+offset_top = 30.0
+offset_right = -18.0
+offset_bottom = -24.0
+mouse_filter = 2
+theme_override_constants/separation = 12
+
+[node name="Info" type="Label" parent="Root/BottomStrip/BottomRow" unique_id=552047018]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.8117647, 0.827451, 0.8666667, 1)
+theme_override_font_sizes/font_size = 13
+text = "Select a province"
+vertical_alignment = 1
+
+[node name="RecruitA" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=1129349121]
+custom_minimum_size = Vector2(210, 38)
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Recruit"
+
+[node name="RecruitB" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=1233052304]
+custom_minimum_size = Vector2(210, 38)
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Recruit"
+
+[node name="March" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=484649994]
+custom_minimum_size = Vector2(96, 38)
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "March"
+
+[node name="EndTurn" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=462471423]
+custom_minimum_size = Vector2(120, 38)
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "End Turn"
+
+[node name="Save" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=818968670]
+custom_minimum_size = Vector2(80, 38)
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Save"
+
+[node name="Menu" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=346457525]
+custom_minimum_size = Vector2(80, 38)
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Menu"
+
+[node name="Hint" type="Label" parent="Root" unique_id=1493101988]
+layout_mode = 0
+offset_right = 1.0
+offset_bottom = 23.0
+theme_override_colors/font_color = Color(1, 0.8352941, 0.5411765, 1)
+theme_override_font_sizes/font_size = 13
+
+[node name="Battle" type="Label" parent="Root" unique_id=1597063196]
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -1.0
+offset_bottom = 23.0
+theme_override_colors/font_color = Color(1, 0.8117647, 0.61960787, 1)
+theme_override_font_sizes/font_size = 12
+horizontal_alignment = 2
