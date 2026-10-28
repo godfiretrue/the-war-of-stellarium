@@ -1,0 +1,33 @@
+[gd_scene format=3 uid="uid://e4215r8uq778"]
+
+[ext_resource type="Script" path="res://scripts/map/province_view.gd" id="1_rir0f"]
+
+[node name="Province" type="Area2D" unique_id=1711361244]
+script = ExtResource("1_rir0f")
+
+[node name="Fill" type="Polygon2D" parent="." unique_id=317664624]
+
+[node name="Border" type="Line2D" parent="." unique_id=1747821697]
+width = 3.0
+
+[node name="Hit" type="CollisionPolygon2D" parent="." unique_id=1171897412]
+
+[node name="Name" type="Label" parent="." unique_id=975816363]
+offset_left = -74.0
+offset_top = -32.0
+offset_right = 74.0
+offset_bottom = -9.0
+theme_override_colors/font_color = Color(0.95686275, 0.95686275, 0.96862745, 1)
+theme_override_font_sizes/font_size = 15
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Info" type="Label" parent="." unique_id=1618386964]
+offset_left = -74.0
+offset_top = -6.0
+offset_right = 74.0
+offset_bottom = 34.0
+theme_override_colors/font_color = Color(0.78431374, 0.8, 0.8392157, 1)
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 1
+vertical_alignment = 1
