@@ -1,0 +1,6 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# LimboAI sample project, kept on disk for reference only
+/demo/
