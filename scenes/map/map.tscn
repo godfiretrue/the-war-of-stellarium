@@ -1,0 +1,23 @@
+[gd_scene format=3 uid="uid://bveu1av8i6ia8"]
+
+[ext_resource type="Script" uid="uid://ithjgb0qatnk" path="res://scripts/map/map_view.gd" id="1_sxf4j"]
+[ext_resource type="Script" uid="uid://d04gf7ywr84iw" path="res://scripts/ai/bot_controller.gd" id="2_tqkkf"]
+[ext_resource type="PackedScene" uid="uid://b8qq7wh0l1dft" path="res://scenes/ui/hud.tscn" id="3_a2pkv"]
+
+[node name="Map" type="Node2D" unique_id=483889304]
+script = ExtResource("1_sxf4j")
+
+[node name="Background" type="CanvasLayer" parent="." unique_id=844668894]
+layer = -1
+
+[node name="Fill" type="ColorRect" parent="Background" unique_id=1912233619]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.078431375, 0.08627451, 0.10980392, 1)
+
+[node name="Bot" type="Node" parent="." unique_id=355615471]
+script = ExtResource("2_tqkkf")
+
+[node name="HUD" parent="." unique_id=480278888 instance=ExtResource("3_a2pkv")]
