@@ -10,11 +10,14 @@ extends Resource
 @export var terrain: int = Balance.Terrain.PLAINS
 @export var owner_faction: int = Balance.Faction.NEUTRAL
 @export var is_capital: bool = false
+@export var is_city: bool = true
+@export var territory_type: String = "City"
 @export var capital_of: int = Balance.Faction.NEUTRAL
 @export var neighbors: PackedStringArray = PackedStringArray()
 @export var resource_type: String = ""
 @export var resource_per_turn: int = 0
 @export var map_position: Vector2 = Vector2.ZERO
+@export var polygon: PackedVector2Array = PackedVector2Array()
 
 ## unit_id -> troop count
 @export var garrison: Dictionary = {}

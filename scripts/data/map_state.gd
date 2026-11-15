@@ -7,6 +7,10 @@ extends Resource
 @export var turn_number: int = 1
 @export var active_faction: int = Balance.Faction.HUMANS
 
+## Outline of the whole continent in world coordinates (render-only, rebuilt
+## by MapFactory, never saved).
+var coastline: PackedVector2Array = PackedVector2Array()
+
 
 func province_count() -> int:
 	return provinces.size()

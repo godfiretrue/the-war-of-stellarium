@@ -148,9 +148,10 @@ func _recruitment_province() -> ProvinceData:
 		return capital
 
 	var owned := game.map_state.provinces_owned_by(bot_faction)
-	if owned.is_empty():
-		return null
-	return owned[0]
+	for province in owned:
+		if province.is_city:
+			return province
+	return null
 
 
 # --- Rule 2: attack -------------------------------------------------------

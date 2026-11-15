@@ -1,69 +1,172 @@
 [gd_scene format=3 uid="uid://diqvyj2jhixt8"]
 
-[ext_resource type="Script" uid="uid://c58ssjek2wtk5" path="res://scripts/ui/main_menu.gd" id="1_sl1te"]
+[ext_resource type="Script" uid="uid://c58ssjek2wtk5" path="res://scripts/ui/main_menu.gd" id="1_menu"]
+[ext_resource type="Script" path="res://scripts/ui/starfield.gd" id="2_stars"]
+[ext_resource type="Script" path="res://scripts/ui/black_hole.gd" id="3_hole"]
+[ext_resource type="Script" path="res://scripts/ui/constellation_title.gd" id="4_title"]
 
-[node name="MainMenu" type="Control" unique_id=475477524]
+[sub_resource type="Gradient" id="Gradient_shade"]
+offsets = PackedFloat32Array(0, 0.55, 1)
+colors = PackedColorArray(0.02, 0.025, 0.05, 0.92, 0.02, 0.025, 0.05, 0.45, 0.02, 0.025, 0.05, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_shade"]
+gradient = SubResource("Gradient_shade")
+fill_from = Vector2(0, 0)
+fill_to = Vector2(1, 0)
+
+[sub_resource type="Gradient" id="Gradient_glow"]
+offsets = PackedFloat32Array(0, 1)
+colors = PackedColorArray(0.3, 0.34, 0.85, 0.3, 0.3, 0.34, 0.85, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_glow"]
+gradient = SubResource("Gradient_glow")
+width = 512
+height = 512
+fill = 1
+fill_from = Vector2(0.5, 0.5)
+fill_to = Vector2(0.5, 0)
+
+[node name="MainMenu" type="Control"]
 layout_mode = 3
-anchors_preset = 0
-script = ExtResource("1_sl1te")
-
-[node name="Background" type="ColorRect" parent="." unique_id=1793396292]
-layout_mode = 0
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 2
-color = Color(0.0627451, 0.07058824, 0.09411765, 1)
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_menu")
 
-[node name="Center" type="CenterContainer" parent="Background" unique_id=198163968]
-layout_mode = 0
+[node name="Backdrop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.035, 0.04, 0.075, 1)
+
+[node name="Stars" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2_stars")
+
+[node name="Glow" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.25
+anchor_top = -0.35
+anchor_right = 1.15
+anchor_bottom = 1.35
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = SubResource("GradientTexture2D_glow")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="BlackHole" type="TextureRect" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.4
+anchor_top = -0.08
+anchor_right = 1.0
+anchor_bottom = 1.08
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+script = ExtResource("3_hole")
+
+[node name="Shade" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = SubResource("GradientTexture2D_shade")
+expand_mode = 1
+
+[node name="MenuMargin" type="MarginContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 0.55
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 96
+theme_override_constants/margin_top = 40
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 64
+
+[node name="Column" type="VBoxContainer" parent="MenuMargin"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="Title" type="Control" parent="MenuMargin/Column"]
+layout_mode = 2
+size_flags_horizontal = 0
+mouse_filter = 2
+script = ExtResource("4_title")
+
+[node name="Spacer" type="Control" parent="MenuMargin/Column"]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
 mouse_filter = 2
 
-[node name="Box" type="VBoxContainer" parent="Background/Center" unique_id=626447008]
+[node name="NewGame" type="Button" parent="MenuMargin/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 52)
 layout_mode = 2
-mouse_filter = 2
-theme_override_constants/separation = 16
-
-[node name="Title" type="Label" parent="Background/Center/Box" unique_id=244763295]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.9098039, 0.89411765, 0.84705883, 1)
-theme_override_font_sizes/font_size = 40
-text = "The Final War of Stellarium"
-horizontal_alignment = 1
-
-[node name="Subtitle" type="Label" parent="Background/Center/Box" unique_id=1249697600]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.6039216, 0.627451, 0.6784314, 1)
-theme_override_font_sizes/font_size = 15
-text = "Humans vs Elves — conquest of seven provinces"
-horizontal_alignment = 1
-
-[node name="Spacer" type="Control" parent="Background/Center/Box" unique_id=181417183]
-custom_minimum_size = Vector2(0, 14)
-layout_mode = 2
-mouse_filter = 2
-
-[node name="NewGame" type="Button" parent="Background/Center/Box" unique_id=1308097927]
-custom_minimum_size = Vector2(280, 46)
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 18
 text = "New Game"
 
-[node name="Continue" type="Button" parent="Background/Center/Box" unique_id=2064199324]
-custom_minimum_size = Vector2(280, 46)
+[node name="Continue" type="Button" parent="MenuMargin/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 52)
 layout_mode = 2
-theme_override_font_sizes/font_size = 16
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 18
 text = "Continue"
 
-[node name="Quit" type="Button" parent="Background/Center/Box" unique_id=1144835376]
-custom_minimum_size = Vector2(280, 46)
+[node name="Quit" type="Button" parent="MenuMargin/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 52)
 layout_mode = 2
-theme_override_font_sizes/font_size = 16
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 18
 text = "Quit"
 
-[node name="Status" type="Label" parent="Background/Center/Box" unique_id=345939331]
+[node name="Status" type="Label" parent="MenuMargin/Column"]
+unique_name_in_owner = true
 layout_mode = 2
-theme_override_colors/font_color = Color(0.7882353, 0.627451, 0.41568628, 1)
+theme_override_colors/font_color = Color(0.79, 0.63, 0.42, 1)
+theme_override_font_sizes/font_size = 13
+
+[node name="Footer" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 96.0
+offset_top = -38.0
+offset_right = 520.0
+offset_bottom = -14.0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.4, 0.42, 0.52, 1)
 theme_override_font_sizes/font_size = 12
-horizontal_alignment = 1
+text = "PAP TGPSI · ETPC · Prototype"

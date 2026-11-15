@@ -54,9 +54,58 @@ func _ready() -> void:
 	_save.pressed.connect(_on_save_pressed)
 	_menu.pressed.connect(_on_menu_pressed)
 
+	_fit_layout()
+
 	_battle.text = ""
 	_hint.text = ""
-	_refresh()
+
+	if game != null and game.map_state != null:
+		var capital := game.map_state.capital_of(PLAYER)
+		if capital != null:
+			_select(capital.id)
+	else:
+		_refresh()
+
+
+# --- Layout --------------------------------------------------------------
+
+## Keeps every HUD text inside the screen. Hint and Battle are free-floating
+## labels with no wrapping in the scene, so long text used to grow off-screen.
+## Here they get a fixed box, word wrap and clipping; Info is clipped to its row.
+func _fit_layout() -> void:
+	_info.custom_minimum_size = Vector2(280, 0)
+	_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_info.clip_text = true
+	_info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+
+	# Hint: single line banner just above the bottom strip.
+	_hint.anchor_left = 0.0
+	_hint.anchor_right = 1.0
+	_hint.anchor_top = 1.0
+	_hint.anchor_bottom = 1.0
+	_hint.offset_left = 18.0
+	_hint.offset_right = -18.0
+	_hint.offset_top = -152.0
+	_hint.offset_bottom = -126.0
+	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint.clip_text = true
+
+	# Battle report: fixed panel in the top-right corner, under the top bar.
+	_battle.anchor_left = 1.0
+	_battle.anchor_right = 1.0
+	_battle.anchor_top = 0.0
+	_battle.anchor_bottom = 0.0
+	_battle.offset_left = -392.0
+	_battle.offset_right = -12.0
+	_battle.offset_top = 54.0
+	_battle.offset_bottom = 134.0
+	_battle.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_battle.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_battle.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_battle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_battle.clip_text = true
 
 
 # --- Refresh -------------------------------------------------------------
@@ -65,12 +114,12 @@ func _refresh() -> void:
 	if game == null or game.map_state == null:
 		return
 
-	_gold.text = "Gold %d" % game.get_gold(PLAYER)
-	_manpower.text = "Manpower %d" % game.get_manpower(PLAYER)
+	_gold.text = "🪙 %d" % game.get_gold(PLAYER)
+	_manpower.text = "👥 %d" % game.get_manpower(PLAYER)
 
 	var key := game.faction_resource_key(PLAYER)
-	_resource.text = "%s %d" % [Balance.resource_name(key), game.get_resource(PLAYER, key)]
-	_turn.text = "Turn %d · %s" % [turn_manager.turn_number, turn_manager.phase_short_name()]
+	_resource.text = "✦ %d %s" % [game.get_resource(PLAYER, key), Balance.resource_name(key)]
+	_turn.text = "⏳ Turno %d · %s" % [turn_manager.turn_number, turn_manager.phase_short_name()]
 
 	_refresh_selection()
 	_refresh_buttons()
@@ -79,36 +128,47 @@ func _refresh() -> void:
 func _refresh_selection() -> void:
 	var province := _selected_province()
 	if province == null:
-		_info.text = "Select a province"
+		_info.text = "Selecione uma província no mapa"
 		return
 
-	var header := "%s — %s, %s" % [
+	var role_icon := "★" if province.is_capital else ("🏰" if province.is_city else "⚑")
+	var role_name := "Capital" if province.is_capital else ("Castelo" if province.is_city else "Corredor")
+	var line1 := "%s %s (%s) · %s" % [
+		role_icon,
 		province.display_name,
+		role_name,
 		Balance.faction_name(province.owner_faction),
-		Balance.terrain_name(province.terrain),
 	]
-	if province.is_capital:
-		header += " (capital)"
 
-	var lines := PackedStringArray([header])
-	lines.append("Garrison: %d troops [%s]" % [province.total_troops(), province.garrison_summary()])
-	lines.append("Attack %.0f · Defence %.0f (terrain x%.2f)" % [
-		province.attack_power(), province.defense_power(), Balance.terrain_defense(province.terrain),
-	])
+	var troops := province.total_troops()
+	var line2 := ""
+	if troops > 0:
+		line2 = "⚔ %d Tropas (Atk %.0f / Def %.0f)" % [
+			troops, province.attack_power(), province.defense_power()
+		]
+	else:
+		line2 = "⚔ Sem tropas"
+
 	if not province.resource_type.is_empty():
-		lines.append("%s +%d per turn" % [
-			Balance.resource_name(province.resource_type), province.resource_per_turn,
-		])
-	_info.text = "\n".join(lines)
+		line2 += " · +%d %s" % [
+			province.resource_per_turn, Balance.resource_name(province.resource_type)
+		]
+
+	_info.text = "%s\n%s" % [line1, line2]
 
 
 func _refresh_buttons() -> void:
 	var player_turn: bool = turn_manager.is_player_turn()
 	_end_turn.disabled = not player_turn
+	_end_turn.text = "⏳ Turno"
 
 	var province := _selected_province()
 	var owned: bool = province != null and province.is_owned_by(PLAYER)
 	_march.disabled = not (player_turn and owned and province.total_troops() > 0)
+	_march.text = "➔ Marchar"
+
+	var is_city_province := province != null and province.is_city
+	var can_recruit_base := player_turn and owned and is_city_province
 
 	var unit_ids := UnitCatalog.units_for_faction(PLAYER)
 	var buttons: Array[Button] = [_recruit_a, _recruit_b]
@@ -123,8 +183,16 @@ func _refresh_buttons() -> void:
 		var costs := unit.costs_for(PLAYER)
 		var gold_cost := int(costs["gold"])
 		var manpower_cost := int(costs["manpower"])
-		button.text = "Recruit %s — %dg %dmp" % [unit.display_name, gold_cost, manpower_cost]
-		button.disabled = not (player_turn and owned and game.can_afford(PLAYER, gold_cost, manpower_cost))
+
+		if not owned:
+			button.text = "%s" % unit.display_name
+			button.disabled = true
+		elif not is_city_province:
+			button.text = "Sem Recrutamento"
+			button.disabled = true
+		else:
+			button.text = "+ %s (%d🪙 %d👥)" % [unit.display_name, gold_cost, manpower_cost]
+			button.disabled = not (can_recruit_base and game.can_afford(PLAYER, gold_cost, manpower_cost))
 
 
 # --- Player actions ------------------------------------------------------
@@ -234,15 +302,21 @@ func _on_phase_changed(_phase: int) -> void:
 func _on_battle_resolved(result: Dictionary) -> void:
 	var attacker := Balance.faction_name(int(result.get("attacker_faction", 0)))
 	var defender := Balance.faction_name(int(result.get("defender_faction", 1)))
-	_battle.text = "Battle at %s\n%s attacked %s — power %.0f vs %.0f\nLosses: %d attacker, %d defender · %s" % [
-		String(result.get("province_name", "?")),
+	var prov_id := String(result.get("province_id", ""))
+	var prov := game.map_state.get_province(prov_id) if (game != null and game.map_state != null) else null
+	var battle_type := "Castle Siege of %s" % String(result.get("province_name", "?"))
+	if prov != null and not prov.is_city:
+		battle_type = "Open Field Battle at %s" % prov.display_name
+
+	_battle.text = "%s\n%s attacked %s — power %.0f vs %.0f\nLosses: %d attacker, %d defender · %s" % [
+		battle_type,
 		attacker,
 		defender,
 		float(result.get("attacker_power", 0.0)),
 		float(result.get("defender_power", 0.0)),
 		int(result.get("attacker_losses", 0)),
 		int(result.get("defender_losses", 0)),
-		"province captured" if bool(result.get("captured", false)) else "province held",
+		"territory captured" if bool(result.get("captured", false)) else "territory held",
 	]
 	_refresh()
 

@@ -6,9 +6,9 @@ extends BTAction
 ## selector fall through to the advance task.
 
 func _tick(_delta: float) -> int:
-	var agent := get_agent()
-	if agent == null or not agent.has_method("attack_phase"):
+	var bot := get_agent()
+	if bot == null or not bot.has_method("attack_phase"):
 		return BT.FAILURE
 
-	var battles: int = agent.attack_phase()
+	var battles: int = bot.attack_phase()
 	return BT.SUCCESS if battles > 0 else BT.FAILURE

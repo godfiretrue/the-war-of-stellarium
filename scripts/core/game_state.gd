@@ -188,6 +188,8 @@ func recruit(faction: int, province_id: String, unit_id: String, count: int = 1)
 		return _fail("unknown province")
 	if not province.is_owned_by(faction):
 		return _fail("%s is not yours" % province.display_name)
+	if not province.is_city:
+		return _fail("%s is an open corridor — recruitment is only allowed in cities and castles" % province.display_name)
 
 	var unit := UnitCatalog.get_unit(unit_id)
 	if unit == null:

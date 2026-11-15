@@ -12,6 +12,8 @@ width = 3.0
 
 [node name="Hit" type="CollisionPolygon2D" parent="." unique_id=1171897412]
 
+[node name="Visuals" type="Node2D" parent="." unique_id=293847102]
+
 [node name="Name" type="Label" parent="." unique_id=975816363]
 offset_left = -74.0
 offset_top = -32.0

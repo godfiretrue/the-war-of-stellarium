@@ -87,48 +87,57 @@ mouse_filter = 2
 theme_override_constants/separation = 12
 
 [node name="Info" type="Label" parent="Root/BottomStrip/BottomRow" unique_id=552047018]
+custom_minimum_size = Vector2(250, 0)
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.8117647, 0.827451, 0.8666667, 1)
-theme_override_font_sizes/font_size = 13
-text = "Select a province"
+theme_override_font_sizes/font_size = 12
+text = "Selecione uma província"
 vertical_alignment = 1
+autowrap_mode = 2
+text_overrun_behavior = 3
 
 [node name="RecruitA" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=1129349121]
-custom_minimum_size = Vector2(210, 38)
+custom_minimum_size = Vector2(170, 38)
 layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "Recruit"
+theme_override_font_sizes/font_size = 12
+text = "Recrutar"
+clip_text = true
 
 [node name="RecruitB" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=1233052304]
-custom_minimum_size = Vector2(210, 38)
+custom_minimum_size = Vector2(170, 38)
 layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "Recruit"
+theme_override_font_sizes/font_size = 12
+text = "Recrutar"
+clip_text = true
 
 [node name="March" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=484649994]
-custom_minimum_size = Vector2(96, 38)
+custom_minimum_size = Vector2(90, 38)
 layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "March"
+theme_override_font_sizes/font_size = 12
+text = "Marchar"
+clip_text = true
 
 [node name="EndTurn" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=462471423]
-custom_minimum_size = Vector2(120, 38)
+custom_minimum_size = Vector2(115, 38)
 layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "End Turn"
+theme_override_font_sizes/font_size = 12
+text = "Passar Turno"
+clip_text = true
 
 [node name="Save" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=818968670]
-custom_minimum_size = Vector2(80, 38)
+custom_minimum_size = Vector2(68, 38)
 layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "Save"
+theme_override_font_sizes/font_size = 12
+text = "Gravar"
+clip_text = true
 
 [node name="Menu" type="Button" parent="Root/BottomStrip/BottomRow" unique_id=346457525]
-custom_minimum_size = Vector2(80, 38)
+custom_minimum_size = Vector2(68, 38)
 layout_mode = 2
-theme_override_font_sizes/font_size = 13
+theme_override_font_sizes/font_size = 12
 text = "Menu"
+clip_text = true
 
 [node name="Hint" type="Label" parent="Root" unique_id=1493101988]
 layout_mode = 0

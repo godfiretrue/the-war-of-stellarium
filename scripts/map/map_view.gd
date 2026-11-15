@@ -1,17 +1,16 @@
 class_name MapView
 extends Node2D
-## Renders the province graph, draws adjacency edges and owns map input and
-## selection. Game rules stay out of this node.
+## Renders the continental world map, marching routes, and owns input and selection.
 ##
-## The Game and TurnManager singletons are resolved through the tree so this
-## script parses cleanly in editors with a stale autoload cache.
+## Game rules stay out of this node.
 
 signal province_clicked(province_id: String)
 signal province_selected(province_id: String)
 
 const PROVINCE_SCENE := preload("res://scenes/map/province.tscn")
-const EDGE_COLOR := Color(0.56, 0.58, 0.63, 0.55)
-const EDGE_WIDTH := 5.0
+const ROAD_COLOR := Color(0.85, 0.88, 0.95, 0.22)
+const ROAD_ACTIVE_COLOR := Color(1.0, 0.86, 0.35, 0.65)
+const ROAD_WIDTH := 2.0
 
 var state: MapState
 var selected_province_id: String = ""
@@ -21,9 +20,16 @@ var turn_manager: Node
 
 var _views: Dictionary = {}
 var _hovered_province_id: String = ""
+var _overlay: Node2D
 
 
 func _ready() -> void:
+	# Rivers and march routes live on a node above the painted provinces.
+	_overlay = Node2D.new()
+	_overlay.name = "Overlay"
+	_overlay.z_index = 1
+	_overlay.draw.connect(_draw_overlay)
+	add_child(_overlay)
 	game = get_node_or_null("/root/Game") as GameState
 	turn_manager = get_node_or_null("/root/TurnManager")
 	if game == null or turn_manager == null:
@@ -40,6 +46,10 @@ func _ready() -> void:
 	_build_views()
 	queue_redraw()
 	_log_map_summary()
+
+	var capital := state.capital_of(Balance.PLAYER_FACTION)
+	if capital != null:
+		select_province(capital.id)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -78,6 +88,7 @@ func select_province(province_id: String) -> void:
 		var view: ProvinceView = _views[view_id]
 		view.set_selected(view_id == province_id)
 	province_selected.emit(province_id)
+	queue_redraw()
 	_log_selection(province_id)
 
 
@@ -90,6 +101,7 @@ func refresh_all() -> void:
 	for view_id: String in _views.keys():
 		var view: ProvinceView = _views[view_id]
 		view.refresh()
+	queue_redraw()
 
 
 func _build_views() -> void:
@@ -141,13 +153,42 @@ func _update_hover(point: Vector2) -> void:
 		var view: ProvinceView = _views.get(province_id, null)
 		if view != null:
 			view.set_hovered(true)
+	queue_redraw()
 
 
+## Ocean, coastal shallows and foam. Drawn before (under) the province views.
 func _draw() -> void:
 	if state == null:
 		return
 
+	var ocean := TerrainTextures.get_texture("ocean")
+	if not ocean.changed.is_connected(queue_redraw):
+		ocean.changed.connect(queue_redraw)
+	draw_texture_rect(ocean, Rect2(-300, -200, 1800, 1100), false)
+
+	var coast := state.coastline
+	if coast.size() < 3:
+		return
+	var ring := PackedVector2Array(coast)
+	ring.append(coast[0])
+	draw_polyline(ring, Color(0.0, 0.04, 0.10, 0.20), 78.0, true)
+	draw_polyline(ring, Color(0.10, 0.38, 0.50, 0.14), 56.0, true)
+	draw_polyline(ring, Color(0.16, 0.50, 0.58, 0.16), 38.0, true)
+	draw_polyline(ring, Color(0.28, 0.62, 0.68, 0.20), 22.0, true)
+	draw_polyline(ring, Color(0.80, 0.93, 0.95, 0.55), 5.0, true)
+
+
+## River and march routes. Drawn above the land by a child node with a higher
+## z_index, because the painted provinces would otherwise hide them.
+func _draw_overlay() -> void:
+	if state == null or _overlay == null:
+		return
+
+	_draw_river()
+
 	var drawn_edges: Dictionary = {}
+	var selected_province := state.get_province(selected_province_id) if not selected_province_id.is_empty() else null
+
 	for province in state.provinces:
 		for neighbor_id: String in province.neighbors:
 			var edge_key := "%s|%s" % [province.id, neighbor_id]
@@ -157,8 +198,44 @@ func _draw() -> void:
 			var other := state.get_province(neighbor_id)
 			if other == null:
 				continue
-			draw_line(province.map_position, other.map_position, EDGE_COLOR, EDGE_WIDTH, true)
+
+			var is_active_route := false
+			if selected_province != null:
+				if (province.id == selected_province_id and neighbor_id in selected_province.neighbors) or \
+				   (neighbor_id == selected_province_id and province.id in selected_province.neighbors):
+					is_active_route = true
+
+			var col := ROAD_ACTIVE_COLOR if is_active_route else ROAD_COLOR
+			var width := 3.0 if is_active_route else ROAD_WIDTH
+
+			# Stop short of the icons and troop shields at both ends.
+			var direction := (other.map_position - province.map_position).normalized()
+			var from_point := province.map_position + direction * 38.0
+			var to_point := other.map_position - direction * 38.0
+			if from_point.distance_to(to_point) > 12.0:
+				_overlay.draw_dashed_line(from_point, to_point, col, width, 7.0, true)
 			drawn_edges[edge_key] = true
+
+
+const RIVER_POINTS := [
+	Vector2(558, 60), Vector2(580, 120), Vector2(548, 175), Vector2(566, 235), Vector2(540, 290),
+	Vector2(562, 345), Vector2(548, 395), Vector2(572, 445), Vector2(560, 492),
+]
+
+
+func _draw_river() -> void:
+	var curve := Curve2D.new()
+	var count := RIVER_POINTS.size()
+	for index in count:
+		var point: Vector2 = RIVER_POINTS[index]
+		var previous: Vector2 = RIVER_POINTS[maxi(index - 1, 0)]
+		var following: Vector2 = RIVER_POINTS[mini(index + 1, count - 1)]
+		var tangent := (following - previous) * 0.22
+		curve.add_point(point, -tangent, tangent)
+	var path := curve.tessellate(5, 3.0)
+	_overlay.draw_polyline(path, Color(0.05, 0.12, 0.16, 0.55), 6.5, true)
+	_overlay.draw_polyline(path, Color(0.30, 0.58, 0.78, 0.95), 4.0, true)
+	_overlay.draw_polyline(path, Color(0.62, 0.82, 0.94, 0.55), 1.4, true)
 
 
 func _edge_count() -> int:
@@ -193,8 +270,9 @@ func _log_selection(province_id: String) -> void:
 				neighbor.display_name, Balance.faction_name(neighbor.owner_faction),
 			])
 
-	print("[map] selected %s | %s | %s | %d troops [%s] | capital=%s | neighbours: %s" % [
+	print("[map] selected %s | %s | %s | %s | %d troops [%s] | capital=%s | neighbours: %s" % [
 		province.display_name,
+		province.territory_type,
 		Balance.faction_name(province.owner_faction),
 		Balance.terrain_name(province.terrain),
 		province.total_troops(),
