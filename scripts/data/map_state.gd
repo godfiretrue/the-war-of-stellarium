@@ -7,9 +7,30 @@ extends Resource
 @export var turn_number: int = 1
 @export var active_faction: int = Balance.Faction.HUMANS
 
-## Outline of the whole continent in world coordinates (render-only, rebuilt
-## by MapFactory, never saved).
+## Render-only data produced by WorldGenerator (rebuilt from the seed, never
+## saved): the seed itself is what saves store.
+var map_seed: int = 0
 var coastline: PackedVector2Array = PackedVector2Array()
+var rivers: Array[PackedVector2Array] = []
+var field_image: Image
+var grid_size: Vector2i = Vector2i.ZERO
+var cell_size: int = 3
+var label_grid: PackedInt32Array = PackedInt32Array()
+var label_ids: PackedStringArray = PackedStringArray()
+
+
+## Province under a world-space point, or "" over sea / off the map.
+func province_id_at(point: Vector2) -> String:
+	if label_grid.is_empty():
+		return ""
+	var cell_x := int(floor(point.x / float(cell_size)))
+	var cell_y := int(floor(point.y / float(cell_size)))
+	if cell_x < 0 or cell_y < 0 or cell_x >= grid_size.x or cell_y >= grid_size.y:
+		return ""
+	var label := label_grid[cell_y * grid_size.x + cell_x]
+	if label < 0 or label >= label_ids.size():
+		return ""
+	return label_ids[label]
 
 
 func province_count() -> int:

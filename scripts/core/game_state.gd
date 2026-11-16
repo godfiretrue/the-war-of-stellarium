@@ -31,8 +31,10 @@ func is_started() -> bool:
 	return map_state != null
 
 
-func start_new_game() -> void:
-	map_state = MapFactory.create_default_map()
+## Pass a seed to rebuild a specific world (used when loading a save);
+## a negative seed rolls a new random continent.
+func start_new_game(map_seed: int = -1) -> void:
+	map_state = MapFactory.create_default_map(map_seed)
 	gold.clear()
 	manpower.clear()
 	faction_resources.clear()

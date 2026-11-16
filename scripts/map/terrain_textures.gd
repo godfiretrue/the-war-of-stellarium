@@ -34,12 +34,11 @@ static func get_texture(kind: String) -> Texture2D:
 				[1.00, Color(0.26, 0.42, 0.21)],
 			])
 		"mountain":
-			texture = _make(WORLD_SIZE, 47, 0.014, FastNoiseLite.FRACTAL_RIDGED, 4, [
-				[0.00, Color(0.27, 0.25, 0.24)],
-				[0.40, Color(0.42, 0.39, 0.36)],
-				[0.72, Color(0.58, 0.55, 0.51)],
-				[0.90, Color(0.80, 0.80, 0.80)],
-				[1.00, Color(0.95, 0.96, 0.98)],
+			texture = _make(WORLD_SIZE, 47, 0.022, FastNoiseLite.FRACTAL_FBM, 5, [
+				[0.00, Color(0.30, 0.27, 0.24)],
+				[0.40, Color(0.42, 0.38, 0.34)],
+				[0.70, Color(0.54, 0.50, 0.45)],
+				[1.00, Color(0.66, 0.63, 0.58)],
 			])
 		"ocean":
 			texture = _make(Vector2i(1200, 760), 63, 0.006, FastNoiseLite.FRACTAL_FBM, 3, [

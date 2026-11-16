@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 1
+const VERSION := 2
 
 
 static func has_save() -> bool:
@@ -25,6 +25,7 @@ static func save_game(game: GameState, turn_number: int) -> bool:
 
 	var data := {
 		"version": VERSION,
+		"map_seed": game.map_state.map_seed,
 		"turn_number": turn_number,
 		"factions": _serialize_factions(game),
 		"provinces": _serialize_provinces(game.map_state),
@@ -74,7 +75,7 @@ static func load_game(game: GameState) -> Dictionary:
 	if data.is_empty():
 		return {"ok": false, "reason": "unsupported save version"}
 
-	game.start_new_game()
+	game.start_new_game(int(data.get("map_seed", 0)))
 	_apply_factions(game, data.get("factions", {}))
 	_apply_provinces(game, data.get("provinces", []))
 	game.state_changed.emit()
@@ -86,7 +87,8 @@ static func load_game(game: GameState) -> Dictionary:
 ## file is from the future or unknown and must not be loaded.
 static func _migrate(raw: Dictionary) -> Dictionary:
 	var version := int(raw.get("version", 0))
-	if version <= 0 or version > VERSION:
+	# Version 1 saves belong to the old hand-made map and cannot be rebuilt.
+	if version < 2 or version > VERSION:
 		return {}
 
 	var data := raw

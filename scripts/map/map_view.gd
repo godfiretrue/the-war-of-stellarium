@@ -1,15 +1,20 @@
 class_name MapView
 extends Node2D
-## Renders the continental world map, marching routes, and owns input and selection.
+## Renders the procedurally generated continent and owns input and selection.
 ##
+## Layers, bottom to top: terrain shader (relief, biomes, sea), province views
+## (ownership tint, border, icons), overlay (rivers, march routes).
 ## Game rules stay out of this node.
 
 signal province_clicked(province_id: String)
 signal province_selected(province_id: String)
 
 const PROVINCE_SCENE := preload("res://scenes/map/province.tscn")
-const ROAD_COLOR := Color(0.85, 0.88, 0.95, 0.22)
-const ROAD_ACTIVE_COLOR := Color(1.0, 0.86, 0.35, 0.65)
+const TERRAIN_SHADER := preload("res://shaders/terrain.gdshader")
+const WORLD_SIZE := Vector2(1152, 648)
+const DEEP_SEA := Color(0.03, 0.10, 0.20)
+const ROAD_COLOR := Color(0.95, 0.95, 0.98, 0.28)
+const ROAD_ACTIVE_COLOR := Color(1.0, 0.86, 0.35, 0.80)
 const ROAD_WIDTH := 2.0
 
 var state: MapState
@@ -21,15 +26,17 @@ var turn_manager: Node
 var _views: Dictionary = {}
 var _hovered_province_id: String = ""
 var _overlay: Node2D
+var _terrain: ColorRect
 
 
 func _ready() -> void:
-	# Rivers and march routes live on a node above the painted provinces.
+	# Rivers and march routes live on a node above the province views.
 	_overlay = Node2D.new()
 	_overlay.name = "Overlay"
 	_overlay.z_index = 1
 	_overlay.draw.connect(_draw_overlay)
 	add_child(_overlay)
+
 	game = get_node_or_null("/root/Game") as GameState
 	turn_manager = get_node_or_null("/root/TurnManager")
 	if game == null or turn_manager == null:
@@ -43,8 +50,9 @@ func _ready() -> void:
 		turn_manager.start_game()
 
 	state = game.map_state
+	_build_terrain()
 	_build_views()
-	queue_redraw()
+	_overlay.queue_redraw()
 	_log_map_summary()
 
 	var capital := state.capital_of(Balance.PLAYER_FACTION)
@@ -67,16 +75,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 
 
-## Province id under a viewport-space point, or "" when the point is off-map.
+## Province id under a viewport-space point, or "" over the sea.
+## Resolved from the generator's label grid, so it matches the painted land.
 func province_at(point: Vector2) -> String:
-	for province in state.provinces:
-		var view: ProvinceView = _views.get(province.id, null)
-		if view == null:
-			continue
-		var local_point := point - province.map_position
-		if Geometry2D.is_point_in_polygon(local_point, view.hit_polygon()):
-			return province.id
-	return ""
+	return state.province_id_at(point)
 
 
 func select_province(province_id: String) -> void:
@@ -88,7 +90,7 @@ func select_province(province_id: String) -> void:
 		var view: ProvinceView = _views[view_id]
 		view.set_selected(view_id == province_id)
 	province_selected.emit(province_id)
-	queue_redraw()
+	_overlay.queue_redraw()
 	_log_selection(province_id)
 
 
@@ -101,7 +103,35 @@ func refresh_all() -> void:
 	for view_id: String in _views.keys():
 		var view: ProvinceView = _views[view_id]
 		view.refresh()
-	queue_redraw()
+	_overlay.queue_redraw()
+
+
+## The terrain is one full-world rectangle painted by a shader that reads the
+## generator's elevation/moisture image.
+func _build_terrain() -> void:
+	if _terrain == null:
+		_terrain = ColorRect.new()
+		_terrain.name = "Terrain"
+		_terrain.size = WORLD_SIZE
+		_terrain.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_terrain.z_index = -1
+		add_child(_terrain)
+		move_child(_terrain, 0)
+
+	if state == null or state.field_image == null:
+		return
+
+	var material := ShaderMaterial.new()
+	material.shader = TERRAIN_SHADER
+	material.set_shader_parameter("field", ImageTexture.create_from_image(state.field_image))
+	material.set_shader_parameter("grid_size", Vector2(state.grid_size))
+	material.set_shader_parameter("world_size", WORLD_SIZE)
+	_terrain.material = material
+
+	# Window is wider than the world when stretched: keep the edges sea-coloured.
+	var backdrop := get_node_or_null("Background/Fill") as ColorRect
+	if backdrop != null:
+		backdrop.color = DEEP_SEA
 
 
 func _build_views() -> void:
@@ -120,8 +150,9 @@ func _rebuild_views() -> void:
 	_views.clear()
 	_hovered_province_id = ""
 	selected_province_id = ""
+	_build_terrain()
 	_build_views()
-	queue_redraw()
+	_overlay.queue_redraw()
 
 
 func _on_state_changed() -> void:
@@ -153,38 +184,19 @@ func _update_hover(point: Vector2) -> void:
 		var view: ProvinceView = _views.get(province_id, null)
 		if view != null:
 			view.set_hovered(true)
-	queue_redraw()
 
 
-## Ocean, coastal shallows and foam. Drawn before (under) the province views.
-func _draw() -> void:
-	if state == null:
-		return
-
-	var ocean := TerrainTextures.get_texture("ocean")
-	if not ocean.changed.is_connected(queue_redraw):
-		ocean.changed.connect(queue_redraw)
-	draw_texture_rect(ocean, Rect2(-300, -200, 1800, 1100), false)
-
-	var coast := state.coastline
-	if coast.size() < 3:
-		return
-	var ring := PackedVector2Array(coast)
-	ring.append(coast[0])
-	draw_polyline(ring, Color(0.0, 0.04, 0.10, 0.20), 78.0, true)
-	draw_polyline(ring, Color(0.10, 0.38, 0.50, 0.14), 56.0, true)
-	draw_polyline(ring, Color(0.16, 0.50, 0.58, 0.16), 38.0, true)
-	draw_polyline(ring, Color(0.28, 0.62, 0.68, 0.20), 22.0, true)
-	draw_polyline(ring, Color(0.80, 0.93, 0.95, 0.55), 5.0, true)
-
-
-## River and march routes. Drawn above the land by a child node with a higher
-## z_index, because the painted provinces would otherwise hide them.
+## Rivers and march routes, drawn above the provinces.
 func _draw_overlay() -> void:
 	if state == null or _overlay == null:
 		return
 
-	_draw_river()
+	for river in state.rivers:
+		if river.size() < 2:
+			continue
+		_overlay.draw_polyline(river, Color(0.04, 0.12, 0.18, 0.45), 4.6, true)
+		_overlay.draw_polyline(river, Color(0.32, 0.60, 0.80, 0.92), 2.8, true)
+		_overlay.draw_polyline(river, Color(0.66, 0.85, 0.95, 0.5), 1.0, true)
 
 	var drawn_edges: Dictionary = {}
 	var selected_province := state.get_province(selected_province_id) if not selected_province_id.is_empty() else null
@@ -217,27 +229,6 @@ func _draw_overlay() -> void:
 			drawn_edges[edge_key] = true
 
 
-const RIVER_POINTS := [
-	Vector2(558, 60), Vector2(580, 120), Vector2(548, 175), Vector2(566, 235), Vector2(540, 290),
-	Vector2(562, 345), Vector2(548, 395), Vector2(572, 445), Vector2(560, 492),
-]
-
-
-func _draw_river() -> void:
-	var curve := Curve2D.new()
-	var count := RIVER_POINTS.size()
-	for index in count:
-		var point: Vector2 = RIVER_POINTS[index]
-		var previous: Vector2 = RIVER_POINTS[maxi(index - 1, 0)]
-		var following: Vector2 = RIVER_POINTS[mini(index + 1, count - 1)]
-		var tangent := (following - previous) * 0.22
-		curve.add_point(point, -tangent, tangent)
-	var path := curve.tessellate(5, 3.0)
-	_overlay.draw_polyline(path, Color(0.05, 0.12, 0.16, 0.55), 6.5, true)
-	_overlay.draw_polyline(path, Color(0.30, 0.58, 0.78, 0.95), 4.0, true)
-	_overlay.draw_polyline(path, Color(0.62, 0.82, 0.94, 0.55), 1.4, true)
-
-
 func _edge_count() -> int:
 	var total := 0
 	for province in state.provinces:
@@ -246,7 +237,9 @@ func _edge_count() -> int:
 
 
 func _log_map_summary() -> void:
-	print("[map] %d provinces, %d edges" % [state.province_count(), _edge_count()])
+	print("[map] seed %d: %d provinces, %d edges, %d rivers" % [
+		state.map_seed, state.province_count(), _edge_count(), state.rivers.size(),
+	])
 	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
 		var owned := state.provinces_owned_by(faction)
 		var troops := 0

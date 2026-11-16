@@ -73,10 +73,11 @@ func _ready() -> void:
 ## labels with no wrapping in the scene, so long text used to grow off-screen.
 ## Here they get a fixed box, word wrap and clipping; Info is clipped to its row.
 func _fit_layout() -> void:
-	_info.custom_minimum_size = Vector2(280, 0)
+	_info.custom_minimum_size = Vector2(280, 60)
+	_info.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_info.clip_text = true
-	_info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_info.clip_text = false
 
 	# Hint: single line banner just above the bottom strip.
 	_hint.anchor_left = 0.0
