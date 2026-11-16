@@ -5,9 +5,9 @@ conventions the project depends on, and the traps already hit once.
 
 ## Status
 
-Playable MVP: main menu, 7-province map, turn cycle, recruitment, movement,
-numeric combat, behaviour-tree bot, HUD with battle summary, victory/defeat
-screen, JSON save/load with auto-save each turn.
+Playable MVP: main menu, procedurally generated 21-province continent, turn
+cycle, recruitment, movement, numeric combat, behaviour-tree bot, HUD with
+battle summary, victory/defeat screen, JSON save/load with auto-save each turn.
 
 Engine: **Godot 4.7.2-stable** (the brief said 4.6.1; the project was created
 with 4.7 features and runs on the installed editor). GDScript only.
@@ -33,12 +33,14 @@ also advance. That is a deliberate change from the first rule-based version
 ```
 scenes/ui/main_menu.tscn      main scene; New Game / Continue / Quit
 scenes/map/map.tscn           gameplay scene: MapView + Bot + HUD instance
-scenes/map/province.tscn      Area2D hexagon, built at runtime from ProvinceData
+scenes/map/province.tscn      Node2D per province, built at runtime from ProvinceData
 scenes/ui/hud.tscn            top bar + bottom action bar
+shaders/terrain.gdshader      terrain painter: relief, biomes, sea, snow
 scripts/data/balance.gd       every tuning number
 scripts/data/province_data.gd ProvinceData Resource (owner, garrison, terrain)
-scripts/data/map_state.gd     province graph + win/elimination queries
-scripts/data/map_factory.gd   the fixed 7-province layout (edit here)
+scripts/data/map_state.gd     province graph, label grid, rivers, win queries
+scripts/data/world_generator.gd  procedural continent (elevation, rivers, provinces)
+scripts/data/map_factory.gd   entry point: seed -> MapState + starting armies
 scripts/data/unit_type.gd     unit stats Resource
 scripts/data/unit_catalog.gd  builds UnitType cache from Balance.UNIT_DEFS
 scripts/core/game_state.gd    autoload "Game": stockpiles, income, actions
@@ -49,6 +51,7 @@ scripts/ai/bot_controller.gd  BT-driven bot (also used for headless sims)
 scripts/ai/tasks/bt_*.gd      tree leaves: recruit, attack, advance
 scripts/ui/hud.gd             player controller: selection, march, recruit
 scripts/ui/main_menu.gd       menu actions
+scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
 ```
 
 ## Architecture rules
@@ -74,11 +77,18 @@ scripts/ui/main_menu.gd       menu actions
 
 ## Rules implemented
 
-- 7 provinces, symmetric-ish graph, 2 factions + 3 neutral provinces.
+- 21 provinces generated per seed; 6 of them are guaranteed anchors (two
+  capitals, three fortresses, one river town), the rest are generated and
+  neutral. The province graph is always connected.
+- 2 factions + neutral provinces; each faction starts with a connected block
+  around its capital (~30% of the map, clamped 5-8 provinces).
+- 10 cities per map: the 6 anchors plus up to 4 promoted towns.
+- Recruitment is only allowed in cities/castles (`ProvinceData.is_city`); open
+  corridors are movement-only.
 - Income at resolution: 15 gold and 5 manpower per province, capital +8/+2,
   faction resource (Humans: Aether on Plains, Elves: Iron on Mountains) +2.
 - Upkeep per army: `ceil(avg_unit_cost / 15 * troops ^ 1.2)`.
-- Recruit anywhere you own. Humans pay 0.7x; Elves get 1.15x income.
+- Humans pay 0.7x recruitment; Elves get 1.15x income.
 - Movement only between adjacent provinces; moving into an undefended province
   captures it.
 - One attack per province per round (`acted_provinces`, cleared at resolution).
@@ -87,6 +97,55 @@ scripts/ui/main_menu.gd       menu actions
   `ratio = att/(att+def)`; attacker loses `ceil(att*(1-ratio)*0.7)`,
   defender loses `ceil(def*ratio*1.0)`.
 - Win: own every province. Lose: own none.
+
+## World generation
+
+`MapFactory.create_default_map(seed)` -> `WorldGenerator.build(seed)` returns a
+finished `MapState`; negative seed means "pick a random one". Everything the
+map needs (fields, rivers, province shapes, names, owners) is derived from the
+seed, so a save only stores the seed (see save version note below).
+
+Grid: **288x162 cells of 4 px**, covering the fixed 1152x648 world.
+`MapState.grid_size` / `cell_size` describe it; `MapState.label_grid` maps a
+cell to a province index.
+
+Pipeline (`world_generator.gd`):
+
+1. `_generate_fields` - warped elliptical landmass + a mountain field built by
+   `_build_ranges`/`_apply_ranges` (long tapered chains of segments, never
+   radial blobs: noise-only belts produced worm/crater artifacts). Then
+   `_carve_anchor_passes` keeps plains/coast anchors low. Moisture has a
+   west-to-east rain shadow behind ranges, temperature has latitude plus a
+   lapse rate.
+2. `_keep_main_land` - drops disconnected islands so the continent is one piece.
+3. `_trace_rivers` - `_priority_flood` fills depressions (adding a tiny
+   `FILL_EPSILON` per step so basin floors keep a downhill gradient),
+   `_compute_drainage` picks the steepest descent and accumulates, cells above
+   `RIVER_MIN_DRAINAGE` become river, and `_extract_rivers` turns them into
+   smoothed polylines with a width from the accumulated volume. Without the
+   epsilon, flat lake beds made rivers coil in concentric loops.
+4. `_grow_provinces` - 6 anchors are fixed, the rest are grown by seeded
+   multi-source BFS until `TARGET_PROVINCES` (21) regions exist; a retry loop
+   merges/regrows until the graph is connected.
+5. `_assemble_state` - classification (mountain/forest/coast/plains), names,
+   cities, ownership, polygons, and the RGB field image for the shader.
+
+Rendering: `map_view.gd` feeds `MapState.field_image` (R=elevation,
+G=moisture, B=temperature) to `shaders/terrain.gdshader`, which paints sea,
+biomes, hill-shaded relief, rock and snow. Rivers and march routes are drawn by
+`_draw_overlay` on a node above the provinces. `province_view.gd` only adds
+ownership tint, borders and markers.
+
+Invariants are checked by `scripts/tools/worldgen_sweep.gd` (24 seeds, ~700-
+1000 ms per world, exits 1 on failure):
+
+```
+godot --headless --path . --script res://scripts/tools/worldgen_sweep.gd
+```
+
+It asserts 21 provinces, all 6 anchors present, connected graph, non-empty
+polygons, exactly 10 cities, at least 6 rivers and at least 3 provinces per
+faction. Run it after any change to generation.
 
 ## Balance findings (measured, not guessed)
 
@@ -146,6 +205,19 @@ Do not tune by cost multipliers alone; measure 20+ runs.
   This bot never returns `RUNNING` — a turn is resolved in one tick.
 - JSON parses every number as float: cast with `int()` when loading saves.
 - Saves go to `user://savegame.json` via a `.tmp` file + rename. Never `.tres`.
+- Save `VERSION` is **3**. World generation renames/moves generated provinces,
+  so old saves cannot be rebuilt: `_migrate` returns `{}` for any version that
+  is not the current one and the caller treats that as "no save".
+- A `PackedInt32Array` fetched from a `Dictionary`/`Array` with `as` is a
+  **copy**; mutate the original or write it back. `PackedInt32Array` has no
+  `pop_back` (convert to `Array` first).
+- World geometry is hard-coded to 1152x648: ellipse centre (576, 286), radii
+  (575, 240), shader `world_size`, grid 288x162 with `CELL = 4`. Change the
+  window size and all four must move together.
+- In `game_eval`, `gen.call(...)` returns `Variant`, so annotate noise locals
+  (`var warp: FastNoiseLite = gen.call(...)`) or GDScript fails to infer types.
+  A runtime error there leaves the game loop frozen (`EVAL_GAME_NOT_READY`);
+  restart the project rather than retrying.
 - After an editor tool write, `GDScript::reload ... error code 43` diagnostics
   are frequently bogus — verify by running the project, not by the diagnostic.
   A script that once failed to parse stays poisoned; delete and recreate it.
@@ -171,3 +243,5 @@ governments/laws, End of the World events, Rats faction.
    re-measure 20+ AI-vs-AI runs.
 3. Optional: author the tree as a `.tres` in the LimboAI editor instead of
    code, once the shape is stable.
+4. Optional: the main menu still draws a visibly pixelated planet — replace it
+   with a downscaled render of the generated field, or hide the planet.

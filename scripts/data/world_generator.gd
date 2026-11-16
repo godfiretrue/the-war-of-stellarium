@@ -19,14 +19,18 @@ extends RefCounted
 ##   6. contours are traced for tint/border drawing and the elevation/moisture
 ##      field is packed into an image for the terrain shader.
 
-const CELL := 3
-const GRID_W := 384
-const GRID_H := 216
+const CELL := 4
+const GRID_W := 288
+const GRID_H := 162
 const SEA_LEVEL := 0.40
 const MOUNTAIN_LEVEL := 0.70
 const TARGET_PROVINCES := 21
 const MIN_SEED_DISTANCE := 88.0
 const MAX_ATTEMPTS := 12
+## How many upstream cells must drain through a cell before it becomes a river.
+const RIVER_MIN_DRAINAGE := 140
+## Height added per flood step, so filled basins keep a downhill gradient.
+const FILL_EPSILON := 0.00002
 
 const NAME_PREFIXES := [
 	"Thorn", "Silver", "Ash", "Raven", "Gold", "Frost", "Oak", "Stone", "Mist", "Ember",
@@ -41,24 +45,38 @@ const SUFFIX_COAST := ["shore", "strand", "mere", "haven", "bay"]
 var _seed: int = 0
 var _rng := RandomNumberGenerator.new()
 var _anchors: Array[Dictionary] = []
+var _spine_phase: float = 0.0
 
 var _elev := PackedFloat32Array()
 var _moist := PackedFloat32Array()
+var _temp := PackedFloat32Array()
 var _river := PackedByteArray()
 var _label := PackedInt32Array()
 var _seed_cells := PackedInt32Array()
 var _rivers: Array[PackedVector2Array] = []
+var _river_widths: Array[float] = []
+
+## Depression-filled surface, downhill direction and flow accumulation.
+## Rebuilt for every world, used by the river network.
+var _filled := PackedFloat32Array()
+var _flow := PackedInt32Array()
+var _drain := PackedInt32Array()
+
+## Mountain strength per cell (0..1) stamped by the range chains.
+var _mount := PackedFloat32Array()
 
 ## Precomputed neighbour indices (-1 when off-grid). Order of the 8-table:
 ## row above (left, mid, right), same row (left, right), row below (l, m, r);
 ## so indices 0, 2, 5 and 7 are the diagonals.
-var _nbr4 := PackedInt32Array()
-var _nbr8 := PackedInt32Array()
+## Static: the grid is fixed, so every new world reuses the same tables
+## instead of paying ~0.5 s to rebuild them.
+static var _nbr4 := PackedInt32Array()
+static var _nbr8 := PackedInt32Array()
 
 
 func build(world_seed: int) -> MapState:
 	var started := Time.get_ticks_msec()
-	_build_neighbor_tables()
+	_ensure_neighbor_tables()
 	for attempt in MAX_ATTEMPTS:
 		var state := _try_build(world_seed + attempt * 7919)
 		if state != null:
@@ -69,31 +87,44 @@ func build(world_seed: int) -> MapState:
 	return null
 
 
-func _build_neighbor_tables() -> void:
-	if not _nbr8.is_empty():
+## The six guaranteed provinces of the world that was generated last.
+func anchors() -> Array[Dictionary]:
+	return _anchors
+
+
+## Builds the shared neighbour tables once per process.
+static func _ensure_neighbor_tables() -> void:
+	if not _nbr4.is_empty():
 		return
 	var total := GRID_W * GRID_H
 	_nbr4.resize(total * 4)
 	_nbr8.resize(total * 8)
 	for y in GRID_H:
+		var row := y * GRID_W
+		var row_up := row - GRID_W
+		var row_down := row + GRID_W
+		var has_up := y > 0
+		var has_down := y < GRID_H - 1
 		for x in GRID_W:
-			var index := y * GRID_W + x
-			var k4 := 0
-			var k8 := 0
-			for dy in range(-1, 2):
-				for dx in range(-1, 2):
-					if dx == 0 and dy == 0:
-						continue
-					var nx := x + dx
-					var ny := y + dy
-					var value := -1
-					if nx >= 0 and ny >= 0 and nx < GRID_W and ny < GRID_H:
-						value = ny * GRID_W + nx
-					_nbr8[index * 8 + k8] = value
-					k8 += 1
-					if dx == 0 or dy == 0:
-						_nbr4[index * 4 + k4] = value
-						k4 += 1
+			var index := row + x
+			var left := x > 0
+			var right := x < GRID_W - 1
+
+			var base8 := index * 8
+			_nbr8[base8] = (row_up + x - 1) if has_up and left else -1
+			_nbr8[base8 + 1] = (row_up + x) if has_up else -1
+			_nbr8[base8 + 2] = (row_up + x + 1) if has_up and right else -1
+			_nbr8[base8 + 3] = (row + x - 1) if left else -1
+			_nbr8[base8 + 4] = (row + x + 1) if right else -1
+			_nbr8[base8 + 5] = (row_down + x - 1) if has_down and left else -1
+			_nbr8[base8 + 6] = (row_down + x) if has_down else -1
+			_nbr8[base8 + 7] = (row_down + x + 1) if has_down and right else -1
+
+			var base4 := index * 4
+			_nbr4[base4] = (row_up + x) if has_up else -1
+			_nbr4[base4 + 1] = (row + x - 1) if left else -1
+			_nbr4[base4 + 2] = (row + x + 1) if right else -1
+			_nbr4[base4 + 3] = (row_down + x) if has_down else -1
 
 
 # --- Anchors ---------------------------------------------------------------
@@ -122,6 +153,7 @@ func _make_anchors() -> Array[Dictionary]:
 func _try_build(world_seed: int) -> MapState:
 	_seed = world_seed
 	_rng.seed = world_seed
+	_spine_phase = _rng.randf_range(0.0, TAU)
 	_anchors = _make_anchors()
 	_rivers.clear()
 
@@ -144,16 +176,19 @@ func _noise(noise_seed: int, frequency: float, fractal: int, octaves: int) -> Fa
 
 
 func _generate_fields() -> void:
-	var warp := _noise(_seed + 1, 0.006, FastNoiseLite.FRACTAL_FBM, 3)
-	var base := _noise(_seed + 2, 0.0075, FastNoiseLite.FRACTAL_FBM, 5)
-	var ridge := _noise(_seed + 3, 0.011, FastNoiseLite.FRACTAL_RIDGED, 4)
-	var belt := _noise(_seed + 4, 0.0045, FastNoiseLite.FRACTAL_FBM, 2)
-	var wet := _noise(_seed + 5, 0.008, FastNoiseLite.FRACTAL_FBM, 4)
+	var warp := _noise(_seed + 1, 0.006, FastNoiseLite.FRACTAL_FBM, 2)
+	var base := _noise(_seed + 2, 0.0075, FastNoiseLite.FRACTAL_FBM, 4)
+	var grain := _noise(_seed + 3, 0.010, FastNoiseLite.FRACTAL_RIDGED, 3)
+	var wet := _noise(_seed + 5, 0.008, FastNoiseLite.FRACTAL_FBM, 3)
 
 	var total := GRID_W * GRID_H
 	_elev.resize(total)
 	_moist.resize(total)
+	_temp.resize(total)
+	_mount.resize(total)
+	_mount.fill(0.0)
 
+	# 1. Continental base: a warped elliptical landmass with gentle lowlands.
 	for y in GRID_H:
 		for x in GRID_W:
 			var px := (float(x) + 0.5) * CELL
@@ -164,32 +199,152 @@ func _generate_fields() -> void:
 			var ny := (wy - 286.0) / 240.0
 			var dist := sqrt(nx * nx + ny * ny)
 			var mask := clampf(1.0 - pow(dist, 3.0), 0.0, 1.0)
-			# Keep open sea under the top and bottom HUD bars.
-			mask *= smoothstep(46.0, 100.0, py) * smoothstep(526.0, 472.0, py)
+			# Fade to open sea under the top and bottom HUD bars; the coast is
+			# pushed behind the bars so no foam line shows in the play area.
+			mask *= smoothstep(20.0, 80.0, py) * smoothstep(560.0, 500.0, py)
 
 			var low := base.get_noise_2d(px, py) * 0.5 + 0.5
-			var crest := clampf(ridge.get_noise_2d(px, py) * 0.5 + 0.5, 0.0, 1.0)
-			var tectonic := smoothstep(0.48, 0.72, belt.get_noise_2d(px, py) * 0.5 + 0.5)
+			var e := 0.18 + mask * 0.40 + (low - 0.5) * 0.24
+			_elev[y * GRID_W + x] = e
 
-			var e := 0.18 + mask * 0.42 + (low - 0.5) * 0.28
-			e += pow(crest, 1.8) * tectonic * 0.46 * mask
+	# 2. Mountain ranges as tapered chains of points. Ridged noise alone gives
+	#    a field of short filaments; a chain gives one long crest with foothills
+	#    and a proper rain shadow behind it.
+	_build_ranges()
+	_apply_ranges(grain)
 
-			var m := 0.15 + 0.6 * (wet.get_noise_2d(px, py) * 0.5 + 0.5) + 0.3 * (1.0 - mask)
-			m -= 0.22 * smoothstep(0.62, 0.82, e)
+	# 3. Plains and coast anchors stay low: ranges get a pass cut through them.
+	_carve_anchor_passes()
 
+	# 4. Moisture and temperature, in one west-to-east pass. Prevailing winds
+	#    come off the western ocean: humidity dries inland and drops sharply
+	#    after a mountain range, which produces the rain shadow.
+	for y in GRID_H:
+		var carried := 1.0
+		var latitude := (float(y) + 0.5) / float(GRID_H)
+		for x in GRID_W:
 			var index := y * GRID_W + x
-			_elev[index] = e
-			_moist[index] = clampf(m, 0.0, 1.0)
+			var px := (float(x) + 0.5) * CELL
+			var py := (float(y) + 0.5) * CELL
 
-	_apply_anchor_terrain(ridge)
+			if _elev[index] < SEA_LEVEL:
+				carried = 1.0
+				_moist[index] = 1.0
+			else:
+				carried = maxf(carried - 0.0026, 0.22)
+				carried = maxf(carried - 0.055 * maxf(_elev[index] - 0.55, 0.0), 0.22)
+				var noise_m := wet.get_noise_2d(px, py) * 0.5 + 0.5
+				_moist[index] = clampf(0.20 + 1.02 * noise_m * carried, 0.0, 1.0)
+
+			# Cold north, warm south, colder with altitude.
+			var t := lerpf(0.22, 0.76, latitude)
+			t -= 0.42 * smoothstep(0.55, 0.98, _elev[index])
+			t += wet.get_noise_2d(px + 91.0, py + 37.0) * 0.05
+			_temp[index] = clampf(t, 0.0, 1.0)
 
 
-## Bends the terrain around each anchor so it has the terrain it is meant to.
-func _apply_anchor_terrain(ridge: FastNoiseLite) -> void:
-	var radius := 82.0
+## Points of one mountain range, meandering around a base heading. Ranges are
+## long and sinuous, so the map reads as geography instead of noise.
+func _range_points(start: Vector2, angle: float, steps: int, step_len: float,
+		wobble: float, jitter: float) -> Array:
+	var points: Array = []
+	var point := start
+	for i in steps:
+		points.append(point)
+		var heading := angle + sin(float(i) * 0.42 + _spine_phase) * wobble \
+				+ _rng.randf_range(-jitter, jitter) + float(i) * 0.012
+		point += Vector2(cos(heading), sin(heading)) * step_len
+		# Keep ranges on the map even with a long chain.
+		point.x = clampf(point.x, 30.0, 1122.0)
+		point.y = clampf(point.y, 40.0, 610.0)
+	points.append(point)
+	return points
+
+
+## Stamps one range into the mountain field: a chain of segments, each with a
+## smooth cross-section, tapering to nothing at both ends.
+@warning_ignore("integer_division")
+func _add_range(points: Array, width: float, height: float) -> void:
+	var segments := points.size() - 1
+	if segments < 1:
+		return
+	for i in segments:
+		var a: Vector2 = points[i]
+		var b: Vector2 = points[i + 1]
+		var along := float(i) / float(segments)
+		var taper := smoothstep(0.0, 0.28, along) * smoothstep(1.0, 0.72, along)
+		if taper <= 0.0:
+			continue
+		var reach := width * (0.80 + 0.30 * sin(float(i) * 1.7 + _spine_phase * 2.0))
+		var min_x := maxi(int((minf(a.x, b.x) - reach) / CELL), 0)
+		var max_x := mini(int((maxf(a.x, b.x) + reach) / CELL), GRID_W - 1)
+		var min_y := maxi(int((minf(a.y, b.y) - reach) / CELL), 0)
+		var max_y := mini(int((maxf(a.y, b.y) + reach) / CELL), GRID_H - 1)
+		for y in range(min_y, max_y + 1):
+			for x in range(min_x, max_x + 1):
+				var point := Vector2((float(x) + 0.5) * CELL, (float(y) + 0.5) * CELL)
+				var closest := Geometry2D.get_closest_point_to_segment(point, a, b)
+				var distance := point.distance_to(closest)
+				if distance > reach:
+					continue
+				var profile := pow(clampf(1.0 - distance / reach, 0.0, 1.0), 1.25)
+				var strength := smoothstep(0.0, 1.0, profile) * height * taper
+				var index := y * GRID_W + x
+				if strength > _mount[index]:
+					_mount[index] = strength
+
+
+## Layout of the ranges: one dominant spine, a secondary chain in the west and
+## a small range through every mountain anchor.
+func _build_ranges() -> void:
+	var spine := _range_points(Vector2(620.0, 90.0), deg_to_rad(96.0), 22, 26.0, 0.85, 0.16)
+	_add_range(spine, 48.0, 0.46)
+
+	var west := _range_points(Vector2(250.0, 350.0), deg_to_rad(-22.0), 15, 31.0, 0.55, 0.12)
+	_add_range(west, 36.0, 0.34)
+
 	for anchor in _anchors:
+		if not anchor["mountain"]:
+			continue
 		var center: Vector2 = anchor["pos"]
-		var wants_mountain: bool = anchor["mountain"]
+		var heading := _rng.randf_range(0.0, TAU)
+		var points: Array = []
+		for i in range(-4, 5):
+			var t := float(i)
+			var angle := heading + sin(t * 0.5 + _spine_phase) * 0.55
+			points.append(center + Vector2(cos(angle), sin(angle)) * (t * 28.0))
+		_add_range(points, 42.0, 0.38)
+
+
+## Lifts the base terrain where the ranges were stamped. Two noise scales: a
+## long one that makes some sections of a range tall and others saddle-shaped,
+## and a fine one so crests are jagged instead of smooth sausages.
+@warning_ignore("integer_division")
+func _apply_ranges(grain: FastNoiseLite) -> void:
+	var total := GRID_W * GRID_H
+	for index in total:
+		var strength := _mount[index]
+		if strength <= 0.0:
+			continue
+		var px := (float(index % GRID_W) + 0.5) * CELL
+		var py := (float(index / GRID_W) + 0.5) * CELL
+		var along := grain.get_noise_2d(px * 0.30 + 91.0, py * 0.30 + 47.0) * 0.5 + 0.5
+		var rough := 0.86 + 0.26 * clampf(grain.get_noise_2d(px, py) * 0.5 + 0.5, 0.0, 1.0)
+		var crags := clampf(grain.get_noise_2d(px * 4.5 + 33.0, py * 4.5 + 71.0) * 0.5 + 0.5, 0.0, 1.0)
+		# The crag layer is what the shader hill-shades into individual peaks.
+		# It is centred on zero so it cuts gullies as well as raising peaks;
+		# without it a range is a smooth grey sausage.
+		_elev[index] += strength * (0.55 + 0.60 * along) * rough + strength * strength * 0.26 * (crags - 0.5)
+
+
+## Plains and coastal anchors are guaranteed low ground: the terrain is pulled
+## down around them, which also reads as a pass cut through a range.
+func _carve_anchor_passes() -> void:
+	var radius := 74.0
+	for anchor in _anchors:
+		if anchor["mountain"]:
+			continue
+		var center: Vector2 = anchor["pos"]
 		var min_x := maxi(int((center.x - radius) / CELL), 0)
 		var max_x := mini(int((center.x + radius) / CELL), GRID_W - 1)
 		var min_y := maxi(int((center.y - radius) / CELL), 0)
@@ -197,43 +352,17 @@ func _apply_anchor_terrain(ridge: FastNoiseLite) -> void:
 		for y in range(min_y, max_y + 1):
 			for x in range(min_x, max_x + 1):
 				var point := Vector2((float(x) + 0.5) * CELL, (float(y) + 0.5) * CELL)
-				var weight := smoothstep(radius, radius * 0.35, point.distance_to(center))
+				var weight := smoothstep(radius, radius * 0.25, point.distance_to(center))
 				if weight <= 0.0:
 					continue
 				var index := y * GRID_W + x
-				if wants_mountain:
-					var crest := clampf(ridge.get_noise_2d(point.x, point.y) * 0.5 + 0.5, 0.0, 1.0)
-					var target := 0.76 + 0.12 * crest
-					_elev[index] = lerpf(_elev[index], target, weight * 0.9)
-					_moist[index] = lerpf(_moist[index], 0.30, weight * 0.5)
-				else:
-					_elev[index] = lerpf(_elev[index], 0.54, weight * 0.85)
-					_moist[index] = lerpf(_moist[index], 0.50, weight * 0.5)
+				_elev[index] = minf(_elev[index], lerpf(_elev[index], 0.50, weight))
 
 
 func _cell_of(point: Vector2) -> int:
 	var x := clampi(int(point.x / CELL), 0, GRID_W - 1)
 	var y := clampi(int(point.y / CELL), 0, GRID_H - 1)
 	return y * GRID_W + x
-
-
-@warning_ignore("integer_division")
-func _neighbors(index: int, diagonal: bool) -> Array[int]:
-	var result: Array[int] = []
-	var x := index % GRID_W
-	var y := index / GRID_W
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
-			if dx == 0 and dy == 0:
-				continue
-			if not diagonal and dx != 0 and dy != 0:
-				continue
-			var nx := x + dx
-			var ny := y + dy
-			if nx < 0 or ny < 0 or nx >= GRID_W or ny >= GRID_H:
-				continue
-			result.append(ny * GRID_W + nx)
-	return result
 
 
 ## Keeps the landmass that holds every anchor; everything else becomes sea.
@@ -247,10 +376,11 @@ func _keep_main_land() -> bool:
 	for start in total:
 		if component[start] != -1 or _elev[start] < SEA_LEVEL:
 			continue
-		var stack: Array[int] = [start]
+		var stack := PackedInt32Array([start])
 		component[start] = next_id
 		while not stack.is_empty():
-			var current: int = stack.pop_back()
+			var current: int = stack[stack.size() - 1]
+			stack.resize(stack.size() - 1)
 			for k in 4:
 				var neighbor := _nbr4[current * 4 + k]
 				if neighbor < 0:
@@ -279,32 +409,20 @@ func _keep_main_land() -> bool:
 
 # --- Rivers ----------------------------------------------------------------
 
+## Water runs along the depression-filled surface, so every land cell has a
+## downhill direction that eventually reaches the sea. That is what turns the
+## map from "one odd stream" into a real branching network: tributaries join
+## the main stem instead of dying in the first pit.
 func _trace_rivers() -> void:
+	_priority_flood()
+	_compute_drainage()
+
 	var total := GRID_W * GRID_H
 	_river.resize(total)
 	_river.fill(0)
-
-	var candidates: Array[int] = []
 	for index in total:
-		if _elev[index] > 0.68 and _elev[index] < 0.86:
-			candidates.append(index)
-	_shuffle(candidates)
-
-	var sources: Array[int] = []
-	for index in candidates:
-		if sources.size() >= 9:
-			break
-		var point := _cell_point(index)
-		var far_enough := true
-		for other in sources:
-			if _cell_point(other).distance_to(point) < 75.0:
-				far_enough = false
-				break
-		if far_enough:
-			sources.append(index)
-
-	for source in sources:
-		_trace_one_river(source)
+		if _elev[index] >= SEA_LEVEL and _drain[index] >= RIVER_MIN_DRAINAGE:
+			_river[index] = 1
 
 	# Rivers make their banks greener.
 	for index in total:
@@ -312,72 +430,163 @@ func _trace_rivers() -> void:
 			continue
 		for k in 8:
 			var neighbor := _nbr8[index * 8 + k]
-			if neighbor >= 0:
-				_moist[neighbor] = minf(_moist[neighbor] + 0.05, 1.0)
+			if neighbor >= 0 and _elev[neighbor] >= SEA_LEVEL:
+				_moist[neighbor] = minf(_moist[neighbor] + 0.06, 1.0)
+
+	_extract_rivers()
 
 
-func _trace_one_river(source: int) -> void:
-	var path: Array[int] = []
-	var visited: Dictionary = {}
-	var current := source
-	var rising := 0
-	var reached := false
+## Priority flood: fills closed depressions up to their lowest outlet. Each step
+## adds FILL_EPSILON to the propagating height, so the filled surface has a
+## strictly descending gradient towards the sea even on a flat basin floor;
+## that is what stops rivers from coiling around lakes.
+@warning_ignore("integer_division")
+func _priority_flood() -> void:
+	var total := GRID_W * GRID_H
+	var levels := 1025
 
-	for _step in 700:
-		path.append(current)
-		visited[current] = true
-		if _elev[current] < SEA_LEVEL:
-			reached = true
-			break
-		if _river[current] == 1 and path.size() > 1:
-			reached = true
-			break
+	_filled.resize(total)
+	var visited := PackedByteArray()
+	visited.resize(total)
+	visited.fill(0)
 
-		var best := -1
-		var best_elev := 9.0
-		for k in 8:
-			var neighbor := _nbr8[current * 8 + k]
-			if neighbor < 0 or visited.has(neighbor):
-				continue
-			if _elev[neighbor] < best_elev:
-				best_elev = _elev[neighbor]
-				best = neighbor
-		if best == -1:
-			break
-		if best_elev > _elev[current]:
-			rising += 1
-			if rising > 3:
+	var buckets: Array = []
+	for _level in levels:
+		buckets.append([])
+
+	for index in total:
+		if _elev[index] < SEA_LEVEL:
+			_filled[index] = _elev[index]
+			visited[index] = 1
+			continue
+		# Only coastal land is seeded; the flood reaches the rest of the
+		# continent from there, so the ~30 000 sea cells are never popped.
+		for k in 4:
+			var neighbor := _nbr4[index * 4 + k]
+			if neighbor >= 0 and _elev[neighbor] < SEA_LEVEL:
+				visited[index] = 1
+				_filled[index] = _elev[index]
+				(buckets[0] as Array).append(index)
 				break
-		else:
-			rising = 0
-		current = best
 
-	if not reached or path.size() < 35:
-		return
+	for level in levels:
+		var bucket: Array = buckets[level]
+		while not bucket.is_empty():
+			var cell: int = bucket.pop_back()
+			var base: float = _filled[cell] + FILL_EPSILON
+			for k in 8:
+				var neighbor := _nbr8[cell * 8 + k]
+				if neighbor < 0 or visited[neighbor] == 1:
+					continue
+				visited[neighbor] = 1
+				var height := maxf(_elev[neighbor], base)
+				_filled[neighbor] = height
+				var target := clampi(int(height * float(levels - 1)), 0, levels - 1)
+				(buckets[target] as Array).append(neighbor)
+		buckets[level] = []
 
-	# Reject rivers that wander in circles instead of heading for the sea.
-	var straight := _cell_point(path[0]).distance_to(_cell_point(path[path.size() - 1]))
-	if straight * 1.8 < float(path.size()) * float(CELL):
-		return
 
-	var points := PackedVector2Array()
-	for index in path:
-		if _elev[index] >= SEA_LEVEL:
-			_river[index] = 1
-		points.append(_cell_point(index))
-	_rivers.append(_chaikin_open(points, 2))
+## Steepest descent on the filled surface, plus flow accumulation. The gradient
+## added by the flood makes every land cell point at a strictly lower neighbour,
+## so the network is acyclic and can be summed high ground first.
+func _compute_drainage() -> void:
+	var total := GRID_W * GRID_H
+	_flow.resize(total)
+	_flow.fill(-1)
+	_drain.resize(total)
+	_drain.fill(0)
+
+	var land: Array[int] = []
+	for index in total:
+		if _elev[index] < SEA_LEVEL:
+			continue
+		land.append(index)
+		var best := -1
+		var best_height := _filled[index]
+		for k in 8:
+			var neighbor := _nbr8[index * 8 + k]
+			if neighbor < 0:
+				continue
+			var height := _filled[neighbor]
+			if height < best_height:
+				best = neighbor
+				best_height = height
+		_flow[index] = best
+
+	land.sort_custom(func(a: int, b: int) -> bool: return _filled[a] > _filled[b])
+	for cell in land:
+		_drain[cell] += 1
+		var downstream := _flow[cell]
+		if downstream >= 0:
+			_drain[downstream] += _drain[cell]
+
+
+## Turns the river cells into chains that run between junctions. Each cell is
+## drawn exactly once, so tributaries join a single stem instead of every
+## source dragging its own path down the same valley.
+func _extract_rivers() -> void:
+	var total := GRID_W * GRID_H
+	_rivers.clear()
+	_river_widths.clear()
+
+	# How many river neighbours feed each cell (capped: only 0/1/2 matter).
+	var upstream := PackedByteArray()
+	upstream.resize(total)
+	upstream.fill(0)
+	for index in total:
+		if _river[index] == 0:
+			continue
+		var downstream := _flow[index]
+		if downstream >= 0 and _river[downstream] == 1:
+			upstream[downstream] = mini(upstream[downstream] + 1, 2)
+
+	for index in total:
+		if _river[index] == 0 or upstream[index] == 1:
+			continue
+
+		# Sources (0 upstream) and junctions (2+) start a chain; walk down to
+		# the next junction or to the sea.
+		var path: Array[int] = [index]
+		var current := _flow[index]
+		while current >= 0 and _river[current] == 1 and upstream[current] == 1:
+			path.append(current)
+			current = _flow[current]
+
+		if current >= 0 and (_river[current] == 1 or _elev[current] < SEA_LEVEL):
+			path.append(current)
+		if path.size() < 4:
+			continue
+
+		var points := PackedVector2Array()
+		for cell in path:
+			points.append(_cell_point(cell))
+		# The path follows grid neighbours, so it is a staircase; a couple of
+		# moving-average passes remove the steps before the curve is smoothed.
+		points = _smooth_path(points, 3)
+
+		var outlet := path[path.size() - 1]
+		var volume := _drain[outlet]
+		var width := clampf(sqrt(float(volume) / 55.0), 0.9, 3.2)
+		_rivers.append(_chaikin_open(points, 3))
+		_river_widths.append(width)
+
+
+## Moving average over the interior points; the ends stay put so separate
+## chains still meet exactly at their junctions.
+func _smooth_path(points: PackedVector2Array, passes: int) -> PackedVector2Array:
+	var current := points
+	if current.size() < 3:
+		return current
+	for _pass in passes:
+		var next := current.duplicate()
+		for index in range(1, current.size() - 1):
+			next[index] = (current[index - 1] + current[index] * 2.0 + current[index + 1]) * 0.25
+		current = next
+	return current
 
 
 func _cell_point(index: int) -> Vector2:
 	return Vector2(float(index % GRID_W) + 0.5, float(index / GRID_W) + 0.5) * float(CELL)
-
-
-func _shuffle(values: Array[int]) -> void:
-	for index in range(values.size() - 1, 0, -1):
-		var other := _rng.randi_range(0, index)
-		var held := values[index]
-		values[index] = values[other]
-		values[other] = held
 
 
 # --- Provinces -------------------------------------------------------------
@@ -434,36 +643,37 @@ func _grow_provinces() -> bool:
 	_label.resize(total)
 	_label.fill(-1)
 
-	var buckets: Array = [[]]
+	var buckets: Array[PackedInt32Array] = [PackedInt32Array()]
 	for seed_index in _seed_cells.size():
 		var cell := _seed_cells[seed_index]
 		distance[cell] = 0
 		_label[cell] = seed_index
-		(buckets[0] as Array).append(cell)
+		buckets[0].append(cell)
 
 	var level := 0
 	while level < buckets.size():
-		var bucket: Array = buckets[level]
-		for index: int in bucket:
+		var bucket: PackedInt32Array = buckets[level]
+		for index in bucket:
 			if distance[index] != level:
 				continue
 			var owner_label := _label[index]
-			var x := index % GRID_W
-			var y := index / GRID_W
-			for neighbor in _neighbors(index, true):
+			for k in 8:
+				var neighbor := _nbr8[index * 8 + k]
+				if neighbor < 0:
+					continue
 				var step_cost := cost[neighbor]
 				if step_cost < 0:
 					continue
-				var diagonal := (neighbor % GRID_W) != x and (neighbor / GRID_W) != y
+				var diagonal := k == 0 or k == 2 or k == 5 or k == 7
 				var step := float(step_cost) * (1.414 if diagonal else 1.0) * multiplier[owner_label]
 				var new_distance := level + maxi(int(step), 1)
 				if new_distance < distance[neighbor]:
 					distance[neighbor] = new_distance
 					_label[neighbor] = owner_label
 					while buckets.size() <= new_distance:
-						buckets.append([])
-					(buckets[new_distance] as Array).append(neighbor)
-		buckets[level] = []
+						buckets.append(PackedInt32Array())
+					buckets[new_distance].append(neighbor)
+		buckets[level] = PackedInt32Array()
 		level += 1
 
 	for index in total:
@@ -477,9 +687,11 @@ func _assemble_state() -> MapState:
 	var total := GRID_W * GRID_H
 
 	# Per-province statistics and adjacency.
+	# Plain Arrays: a nested PackedInt32Array fetched through `as` is a copy,
+	# so appends to it would be silently lost.
 	var cells_of: Array = []
 	for _i in count:
-		cells_of.append(PackedInt32Array())
+		cells_of.append([])
 	var sum_elev := PackedFloat32Array()
 	var sum_moist := PackedFloat32Array()
 	var mountain_cells := PackedInt32Array()
@@ -492,12 +704,14 @@ func _assemble_state() -> MapState:
 		coast_cells.append(0)
 		river_cells.append(0)
 
-	var edge_counts: Dictionary = {}
+	var edge_counts := PackedInt32Array()
+	edge_counts.resize(count * count)
+	edge_counts.fill(0)
 	for index in total:
 		var label := _label[index]
 		if label < 0:
 			continue
-		(cells_of[label] as PackedInt32Array).append(index)
+		(cells_of[label] as Array).append(index)
 		sum_elev[label] += _elev[index]
 		sum_moist[label] += _moist[index]
 		if _elev[index] > MOUNTAIN_LEVEL:
@@ -506,27 +720,26 @@ func _assemble_state() -> MapState:
 			river_cells[label] += 1
 
 		var is_coast := false
-		for neighbor in _neighbors(index, false):
+		for k in 4:
+			var neighbor := _nbr4[index * 4 + k]
+			if neighbor < 0:
+				continue
 			var other := _label[neighbor]
 			if other < 0:
 				is_coast = true
 			elif other != label and neighbor > index:
-				var key := "%d|%d" % [mini(label, other), maxi(label, other)]
-				edge_counts[key] = int(edge_counts.get(key, 0)) + 1
+				edge_counts[mini(label, other) * count + maxi(label, other)] += 1
 		if is_coast:
 			coast_cells[label] += 1
 
 	var adjacency: Array = []
 	for _i in count:
 		adjacency.append([])
-	for key: String in edge_counts.keys():
-		if int(edge_counts[key]) < 3:
-			continue
-		var parts := key.split("|")
-		var a := int(parts[0])
-		var b := int(parts[1])
-		(adjacency[a] as Array).append(b)
-		(adjacency[b] as Array).append(a)
+	for a in count:
+		for b in range(a + 1, count):
+			if edge_counts[a * count + b] >= 3:
+				(adjacency[a] as Array).append(b)
+				(adjacency[b] as Array).append(a)
 
 	var centers := _visual_centers(count)
 
@@ -537,7 +750,7 @@ func _assemble_state() -> MapState:
 
 	var provinces: Array[ProvinceData] = []
 	for index in count:
-		var cell_count := maxi((cells_of[index] as PackedInt32Array).size(), 1)
+		var cell_count := maxi((cells_of[index] as Array).size(), 1)
 		var mean_elev := sum_elev[index] / float(cell_count)
 		var mean_moist := sum_moist[index] / float(cell_count)
 		var mountain_fraction := float(mountain_cells[index]) / float(cell_count)
@@ -577,13 +790,13 @@ func _assemble_state() -> MapState:
 		province.capital_of = province.owner_faction if province.is_capital else Balance.Faction.NEUTRAL
 		provinces.append(province)
 
-	_designate_cities(provinces, adjacency, coast_cells, river_cells, cells_of)
+	_designate_cities(provinces, adjacency, coast_cells, river_cells)
 	_distribute_ownership(provinces, adjacency)
 
 	for index in count:
 		for neighbor_index: int in adjacency[index]:
 			provinces[index].neighbors.append(provinces[neighbor_index].id)
-		provinces[index].polygon = _province_polygon(index, provinces[index].map_position)
+		provinces[index].polygon = _province_polygon(provinces[index].map_position, cells_of[index])
 
 	var state := MapState.new()
 	state.provinces.clear()
@@ -597,6 +810,7 @@ func _assemble_state() -> MapState:
 		ids.append(province.id)
 	state.label_ids = ids
 	state.rivers = _rivers.duplicate()
+	state.river_widths = PackedFloat32Array(_river_widths)
 	state.field_image = _build_field_image()
 	return state
 
@@ -608,12 +822,13 @@ func _visual_centers(count: int) -> PackedInt32Array:
 	depth.resize(total)
 	depth.fill(-1)
 
-	var queue: Array[int] = []
+	var queue := PackedInt32Array()
 	for index in total:
 		if _label[index] < 0:
 			continue
-		for neighbor in _neighbors(index, false):
-			if _label[neighbor] != _label[index]:
+		for k in 4:
+			var neighbor := _nbr4[index * 4 + k]
+			if neighbor >= 0 and _label[neighbor] != _label[index]:
 				depth[index] = 0
 				queue.append(index)
 				break
@@ -622,8 +837,9 @@ func _visual_centers(count: int) -> PackedInt32Array:
 	while head < queue.size():
 		var current := queue[head]
 		head += 1
-		for neighbor in _neighbors(current, false):
-			if _label[neighbor] == _label[current] and depth[neighbor] < 0:
+		for k in 4:
+			var neighbor := _nbr4[current * 4 + k]
+			if neighbor >= 0 and _label[neighbor] == _label[current] and depth[neighbor] < 0:
 				depth[neighbor] = depth[current] + 1
 				queue.append(neighbor)
 
@@ -673,7 +889,7 @@ func _unique_name(kind: String, used: Dictionary) -> String:
 
 ## Adds a handful of towns in good spots (flat, wet, coastal) on top of the
 ## anchors, keeping them apart from each other.
-func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_cells: PackedInt32Array, river_cells: PackedInt32Array, cells_of: Array) -> void:
+func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_cells: PackedInt32Array, river_cells: PackedInt32Array) -> void:
 	var scored: Array[Dictionary] = []
 	for index in provinces.size():
 		if index < _anchors.size():
@@ -696,29 +912,40 @@ func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_c
 		city_indices.append(index)
 
 	var added := 0
-	for entry in scored:
+	# First pass keeps towns apart; the relaxed pass fills up to four even when
+	# the graph is too tight for that.
+	for strict in [true, false]:
 		if added >= 4:
 			break
-		var index: int = entry["index"]
-		var too_close := false
-		for city in city_indices:
-			if city == index or (adjacency[index] as Array).has(city):
-				too_close = true
+		for entry in scored:
+			if added >= 4:
 				break
-		if too_close:
-			continue
-		var province := provinces[index]
-		province.is_city = true
-		if province.terrain == Balance.Terrain.MOUNTAINS:
-			province.territory_type = "Fortress"
-		elif river_cells[index] > 5:
-			province.territory_type = "River Town"
-		elif coast_cells[index] > 8:
-			province.territory_type = "Port Town"
-		else:
-			province.territory_type = "Market Town"
-		city_indices.append(index)
-		added += 1
+			var index: int = entry["index"]
+			if city_indices.has(index):
+				continue
+			var too_close := false
+			if strict:
+				for city in city_indices:
+					if (adjacency[index] as Array).has(city):
+						too_close = true
+						break
+			if too_close:
+				continue
+			_promote_city(provinces[index], river_cells[index], coast_cells[index])
+			city_indices.append(index)
+			added += 1
+
+
+func _promote_city(province: ProvinceData, river_cells: int, coast_cells: int) -> void:
+	province.is_city = true
+	if province.terrain == Balance.Terrain.MOUNTAINS:
+		province.territory_type = "Fortress"
+	elif river_cells > 5:
+		province.territory_type = "River Town"
+	elif coast_cells > 8:
+		province.territory_type = "Port Town"
+	else:
+		province.territory_type = "Market Town"
 
 
 ## Gives each faction a connected block of provinces around its capital.
@@ -765,14 +992,48 @@ func _distribute_ownership(provinces: Array[ProvinceData], adjacency: Array) -> 
 # --- Geometry --------------------------------------------------------------
 
 ## Outline of one province in coordinates local to its map position.
-func _province_polygon(label: int, origin: Vector2) -> PackedVector2Array:
-	var bitmap := BitMap.new()
-	bitmap.create(Vector2i(GRID_W, GRID_H))
-	for index in GRID_W * GRID_H:
-		if _label[index] == label:
-			bitmap.set_bitv(Vector2i(index % GRID_W, index / GRID_W), true)
+## Only the province's own cells are touched (its bounding box), never the
+## whole grid, and thin 1-2 cell appendages are opened away first so borders
+## do not end in needles.
+@warning_ignore("integer_division")
+func _province_polygon(origin: Vector2, cells: Array) -> PackedVector2Array:
+	if cells.is_empty():
+		return PackedVector2Array()
 
-	var outlines := bitmap.opaque_to_polygons(Rect2i(0, 0, GRID_W, GRID_H), 1.1)
+	var min_x := GRID_W
+	var min_y := GRID_H
+	var max_x := 0
+	var max_y := 0
+	for raw_cell in cells:
+		var cell := int(raw_cell)
+		var cx := cell % GRID_W
+		var cy := cell / GRID_W
+		min_x = mini(min_x, cx)
+		min_y = mini(min_y, cy)
+		max_x = maxi(max_x, cx)
+		max_y = maxi(max_y, cy)
+
+	var width := max_x - min_x + 1
+	var height := max_y - min_y + 1
+	var mask := PackedByteArray()
+	mask.resize(width * height)
+	mask.fill(0)
+	for raw_cell in cells:
+		var cell := int(raw_cell)
+		var cx := cell % GRID_W - min_x
+		var cy := cell / GRID_W - min_y
+		mask[cy * width + cx] = 1
+
+	mask = _open_mask(mask, width, height)
+
+	var bitmap := BitMap.new()
+	bitmap.create(Vector2i(width, height))
+	for y in height:
+		for x in width:
+			if mask[y * width + x] == 1:
+				bitmap.set_bitv(Vector2i(x, y), true)
+
+	var outlines := bitmap.opaque_to_polygons(Rect2i(0, 0, width, height), 1.1)
 	var best := PackedVector2Array()
 	var best_area := 0.0
 	for outline in outlines:
@@ -780,12 +1041,14 @@ func _province_polygon(label: int, origin: Vector2) -> PackedVector2Array:
 		if area > best_area:
 			best_area = area
 			best = outline
+	if best.size() < 3:
+		return PackedVector2Array()
 
 	var scaled := PackedVector2Array()
 	for point in best:
-		scaled.append(point * float(CELL))
+		scaled.append((point + Vector2(min_x, min_y)) * float(CELL))
 
-	var smooth := _chaikin_closed(scaled, 2)
+	var smooth := _chaikin_closed(scaled, 3)
 	if Geometry2D.triangulate_polygon(smooth).is_empty():
 		smooth = scaled
 
@@ -793,6 +1056,58 @@ func _province_polygon(label: int, origin: Vector2) -> PackedVector2Array:
 	for point in smooth:
 		local.append(point - origin)
 	return local
+
+
+## Binary opening (erode then dilate with an 8-neighbour element): removes
+## appendages up to two cells wide while leaving the province body untouched.
+func _open_mask(mask: PackedByteArray, width: int, height: int) -> PackedByteArray:
+	if width < 3 or height < 3:
+		return mask
+
+	var eroded := PackedByteArray()
+	eroded.resize(width * height)
+	eroded.fill(0)
+	for y in range(1, height - 1):
+		for x in range(1, width - 1):
+			var index := y * width + x
+			if mask[index] == 0:
+				continue
+			var keep := true
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					if mask[(y + dy) * width + x + dx] == 0:
+						keep = false
+						break
+				if not keep:
+					break
+			if keep:
+				eroded[index] = 1
+
+	var opened := PackedByteArray()
+	opened.resize(width * height)
+	opened.fill(0)
+	var any := false
+	for y in height:
+		for x in width:
+			if eroded[y * width + x] == 0:
+				continue
+			any = true
+			for dy in range(-1, 2):
+				var ny := y + dy
+				if ny < 0 or ny >= height:
+					continue
+				for dx in range(-1, 2):
+					var nx := x + dx
+					if nx < 0 or nx >= width:
+						continue
+					var target := ny * width + nx
+					if mask[target] == 1:
+						opened[target] = 1
+
+	# A province that is entirely a thin strip keeps its raw shape.
+	if not any:
+		return mask
+	return opened
 
 
 func _signed_area(polygon: PackedVector2Array) -> float:
@@ -837,11 +1152,13 @@ func _chaikin_open(points: PackedVector2Array, iterations: int) -> PackedVector2
 	return current
 
 
-## Elevation (R) and moisture (G) packed for the terrain shader.
+## Elevation (R), moisture (G) and temperature (B) packed for the terrain shader.
 func _build_field_image() -> Image:
+	var total := GRID_W * GRID_H
 	var floats := PackedFloat32Array()
-	floats.resize(GRID_W * GRID_H * 2)
-	for index in GRID_W * GRID_H:
-		floats[index * 2] = _elev[index]
-		floats[index * 2 + 1] = _moist[index]
-	return Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGF, floats.to_byte_array())
+	floats.resize(total * 3)
+	for index in total:
+		floats[index * 3] = _elev[index]
+		floats[index * 3 + 1] = _moist[index]
+		floats[index * 3 + 2] = _temp[index]
+	return Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGBF, floats.to_byte_array())

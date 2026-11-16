@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 2
+const VERSION := 3
 
 
 static func has_save() -> bool:
@@ -87,16 +87,12 @@ static func load_game(game: GameState) -> Dictionary:
 ## file is from the future or unknown and must not be loaded.
 static func _migrate(raw: Dictionary) -> Dictionary:
 	var version := int(raw.get("version", 0))
-	# Version 1 saves belong to the old hand-made map and cannot be rebuilt.
-	if version < 2 or version > VERSION:
+	# Saves store the world seed and regenerate the map from it, so any change
+	# to world generation renames/moves provinces and invalidates the province
+	# ids in the file. Refuse old versions instead of loading a broken game.
+	if version != VERSION:
 		return {}
-
-	var data := raw
-	# Version 1 is current. Future steps look like:
-	# if version < 2:
-	#     ... transform data ...
-	#     data["version"] = 2
-	return data
+	return raw
 
 
 static func _serialize_factions(game: GameState) -> Dictionary:

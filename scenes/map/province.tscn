@@ -2,15 +2,13 @@
 
 [ext_resource type="Script" path="res://scripts/map/province_view.gd" id="1_rir0f"]
 
-[node name="Province" type="Area2D" unique_id=1711361244]
+[node name="Province" type="Node2D" unique_id=1711361244]
 script = ExtResource("1_rir0f")
 
 [node name="Fill" type="Polygon2D" parent="." unique_id=317664624]
 
 [node name="Border" type="Line2D" parent="." unique_id=1747821697]
 width = 3.0
-
-[node name="Hit" type="CollisionPolygon2D" parent="." unique_id=1171897412]
 
 [node name="Visuals" type="Node2D" parent="." unique_id=293847102]
 

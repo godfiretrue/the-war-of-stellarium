@@ -10,8 +10,9 @@ extends Resource
 ## Render-only data produced by WorldGenerator (rebuilt from the seed, never
 ## saved): the seed itself is what saves store.
 var map_seed: int = 0
-var coastline: PackedVector2Array = PackedVector2Array()
 var rivers: Array[PackedVector2Array] = []
+## Drawing width in pixels for each river, parallel to `rivers`.
+var river_widths: PackedFloat32Array = PackedFloat32Array()
 var field_image: Image
 var grid_size: Vector2i = Vector2i.ZERO
 var cell_size: int = 3

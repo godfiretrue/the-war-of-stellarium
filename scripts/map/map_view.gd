@@ -191,42 +191,30 @@ func _draw_overlay() -> void:
 	if state == null or _overlay == null:
 		return
 
-	for river in state.rivers:
+	for river_index in state.rivers.size():
+		var river := state.rivers[river_index]
 		if river.size() < 2:
 			continue
-		_overlay.draw_polyline(river, Color(0.04, 0.12, 0.18, 0.45), 4.6, true)
-		_overlay.draw_polyline(river, Color(0.32, 0.60, 0.80, 0.92), 2.8, true)
-		_overlay.draw_polyline(river, Color(0.66, 0.85, 0.95, 0.5), 1.0, true)
+		var width := state.river_widths[river_index] if river_index < state.river_widths.size() else 2.0
+		_overlay.draw_polyline(river, Color(0.03, 0.10, 0.16, 0.30), width * 1.55, true)
+		_overlay.draw_polyline(river, Color(0.22, 0.45, 0.66, 0.90), width, true)
+		_overlay.draw_polyline(river, Color(0.55, 0.75, 0.90, 0.26), maxf(width * 0.26, 0.6), true)
 
-	var drawn_edges: Dictionary = {}
+	# March routes: only the selected province's links, so the map does not
+	# end up covered in dashed lines.
 	var selected_province := state.get_province(selected_province_id) if not selected_province_id.is_empty() else null
+	if selected_province == null:
+		return
 
-	for province in state.provinces:
-		for neighbor_id: String in province.neighbors:
-			var edge_key := "%s|%s" % [province.id, neighbor_id]
-			var reverse_key := "%s|%s" % [neighbor_id, province.id]
-			if drawn_edges.has(edge_key) or drawn_edges.has(reverse_key):
-				continue
-			var other := state.get_province(neighbor_id)
-			if other == null:
-				continue
-
-			var is_active_route := false
-			if selected_province != null:
-				if (province.id == selected_province_id and neighbor_id in selected_province.neighbors) or \
-				   (neighbor_id == selected_province_id and province.id in selected_province.neighbors):
-					is_active_route = true
-
-			var col := ROAD_ACTIVE_COLOR if is_active_route else ROAD_COLOR
-			var width := 3.0 if is_active_route else ROAD_WIDTH
-
-			# Stop short of the icons and troop shields at both ends.
-			var direction := (other.map_position - province.map_position).normalized()
-			var from_point := province.map_position + direction * 38.0
-			var to_point := other.map_position - direction * 38.0
-			if from_point.distance_to(to_point) > 12.0:
-				_overlay.draw_dashed_line(from_point, to_point, col, width, 7.0, true)
-			drawn_edges[edge_key] = true
+	for neighbor_id: String in selected_province.neighbors:
+		var other := state.get_province(neighbor_id)
+		if other == null:
+			continue
+		var direction := (other.map_position - selected_province.map_position).normalized()
+		var from_point := selected_province.map_position + direction * 34.0
+		var to_point := other.map_position - direction * 34.0
+		if from_point.distance_to(to_point) > 12.0:
+			_overlay.draw_dashed_line(from_point, to_point, ROAD_ACTIVE_COLOR, 2.6, 6.0, true)
 
 
 func _edge_count() -> int:
