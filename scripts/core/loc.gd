@@ -73,19 +73,25 @@ const STRINGS := {
 		"save": "Gravar",
 		"menu": "Menu",
 		"options": "Opções",
-		"tip_end_turn": "Terminar o turno (Espaço)",
-		"tip_march": "Marchar para uma província vizinha (M)",
-		"tip_save": "Gravar o jogo (S)",
+		"cancel": "Cancelar",
+		"orders_title": "Ordens em fila",
+		"order_move": "Marchar %s → %s (%d tropas)",
+		"order_recruit": "Recrutar %d %s em %s",
+		"tip_end_turn": "Terminar o planeamento (Espaço)",
+		"tip_march": "Enfileirar uma marcha para uma província vizinha (M)",
+		"tip_save": "Gravar o jogo (S) — só no início do turno, sem ordens",
 		"tip_menu": "Voltar ao menu principal",
 		"tip_options": "Definições: idioma e ecrã inteiro",
 
 		# --- HUD: hints -------------------------------------------------
 		"hint_march": "Modo marcha: escolha uma província vizinha — Esc cancela.",
 		"hint_not_neighbor": "Não é uma província vizinha; modo marcha cancelado.",
-		"hint_bot_turn": "Aguarde: os Elfos estão a jogar.",
+		"hint_bot_turn": "Aguarde: os Elfos estão a planear.",
 		"hint_no_troops": "Essa província não tem tropas para marchar.",
+		"hint_order_queued": "Ordem registada; resolve no fim do turno.",
 		"saved": "Jogo gravado.",
 		"save_failed": "Não foi possível gravar.",
+		"save_turn_start_only": "Só é possível gravar no início do turno, sem ordens em fila.",
 
 		# --- Battle report ----------------------------------------------
 		"battle_siege": "Cerco ao castelo de %s",
@@ -94,6 +100,8 @@ const STRINGS := {
 		"battle_losses": "Baixas: %d atacante · %d defensor",
 		"battle_captured": "território capturado",
 		"battle_held": "território mantido",
+		"battle_swap_line": "Troca de posições: %s ↔ %s",
+		"battles_title": "Batalhas do turno (%d)",
 
 		# --- Main menu --------------------------------------------------
 		"new_game": "Novo jogo",
@@ -177,19 +185,25 @@ const STRINGS := {
 		"save": "Save",
 		"menu": "Menu",
 		"options": "Options",
-		"tip_end_turn": "End the turn (Space)",
-		"tip_march": "March into a neighbouring province (M)",
-		"tip_save": "Save the game (S)",
+		"cancel": "Cancel",
+		"orders_title": "Queued orders",
+		"order_move": "March %s → %s (%d troops)",
+		"order_recruit": "Recruit %d %s in %s",
+		"tip_end_turn": "Finish planning (Space)",
+		"tip_march": "Queue a march into a neighbouring province (M)",
+		"tip_save": "Save the game (S) — start of turn only, with no orders",
 		"tip_menu": "Back to the main menu",
 		"tip_options": "Settings: language and fullscreen",
 
 		# --- HUD: hints -------------------------------------------------
 		"hint_march": "March mode: pick a neighbouring province — Esc cancels.",
 		"hint_not_neighbor": "That province is not a neighbour; march cancelled.",
-		"hint_bot_turn": "Please wait: the Elves are playing.",
+		"hint_bot_turn": "Please wait: the Elves are planning.",
 		"hint_no_troops": "That province has no troops to march.",
+		"hint_order_queued": "Order queued; it resolves at the end of the turn.",
 		"saved": "Game saved.",
 		"save_failed": "Saving failed.",
+		"save_turn_start_only": "You can only save at the start of a turn, with no queued orders.",
 
 		# --- Battle report ----------------------------------------------
 		"battle_siege": "Castle siege of %s",
@@ -198,6 +212,8 @@ const STRINGS := {
 		"battle_losses": "Losses: %d attacker · %d defender",
 		"battle_captured": "territory captured",
 		"battle_held": "territory held",
+		"battle_swap_line": "Swap of positions: %s ↔ %s",
+		"battles_title": "Battles this turn (%d)",
 
 		# --- Main menu --------------------------------------------------
 		"new_game": "New Game",
@@ -303,7 +319,10 @@ static func reason(raw: String) -> String:
 	var text := raw
 	text = text.replace(" is not yours", " não é tua")
 	text = text.replace(" does not border ", " não faz fronteira com ")
-	text = text.replace(" has already attacked this round", " já atacou esta ronda")
+	text = text.replace(" has already issued an attack order this turn", " já emitiu uma ordem de ataque neste turno")
+	text = text.replace("unknown order", "ordem desconhecida")
+	text = text.replace("origin and target are the same province", "a origem e o destino são a mesma província")
+	text = text.replace("recruit count must be positive", "o número de recrutas tem de ser positivo")
 	text = text.replace(
 		" is an open corridor — recruitment is only allowed in cities and castles",
 		" é um corredor aberto — só se recruta em cidades e castelos"

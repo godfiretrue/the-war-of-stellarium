@@ -22,6 +22,11 @@ static func delete_save() -> void:
 static func save_game(game: GameState, turn_number: int) -> bool:
 	if game == null or game.map_state == null:
 		return false
+	# Saves only happen at the start of a turn, with nothing queued, so loading
+	# can never resume a half-planned turn.
+	if game.has_queued_orders():
+		push_warning("SaveSystem: refusing to save with queued orders")
+		return false
 
 	var data := {
 		"version": VERSION,

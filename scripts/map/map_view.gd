@@ -46,6 +46,7 @@ func _ready() -> void:
 		return
 
 	game.state_changed.connect(_on_state_changed)
+	game.orders_changed.connect(_on_orders_changed)
 	turn_manager.phase_changed.connect(_on_phase_changed)
 
 	if not game.is_started():
@@ -183,6 +184,11 @@ func _on_phase_changed(_phase: int) -> void:
 	refresh_all()
 
 
+func _on_orders_changed() -> void:
+	if _overlay != null:
+		_overlay.queue_redraw()
+
+
 func _update_hover(point: Vector2) -> void:
 	var province_id := province_at(point)
 	if province_id == _hovered_province_id:
@@ -200,7 +206,7 @@ func _update_hover(point: Vector2) -> void:
 			view.set_hovered(true)
 
 
-## Rivers and march routes, drawn above the provinces.
+## Rivers, queued orders and march routes, drawn above the provinces.
 func _draw_overlay() -> void:
 	if state == null or _overlay == null:
 		return
@@ -213,6 +219,8 @@ func _draw_overlay() -> void:
 		_overlay.draw_polyline(river, Color(0.03, 0.10, 0.16, 0.30), width * 1.55, true)
 		_overlay.draw_polyline(river, Color(0.22, 0.45, 0.66, 0.90), width, true)
 		_overlay.draw_polyline(river, Color(0.55, 0.75, 0.90, 0.26), maxf(width * 0.26, 0.6), true)
+
+	_draw_queued_orders()
 
 	# March routes: only the selected province's links, so the map does not
 	# end up covered in dashed lines.
@@ -229,6 +237,43 @@ func _draw_overlay() -> void:
 		var to_point := other.map_position - direction * 34.0
 		if from_point.distance_to(to_point) > 12.0:
 			_overlay.draw_dashed_line(from_point, to_point, ROAD_ACTIVE_COLOR, 2.6, 6.0, true)
+
+
+## One plain arrow per queued march, coloured by the faction that queued it.
+func _draw_queued_orders() -> void:
+	if game == null:
+		return
+	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
+		var color := UiStyle.faction_color(faction)
+		color.a = 0.85
+		for order_variant in game.queued_orders_for(faction):
+			var order: Dictionary = order_variant
+			if String(order.get("type", "")) != "move":
+				continue
+			var from_province := state.get_province(String(order.get("from_id", "")))
+			var to_province := state.get_province(String(order.get("to_id", "")))
+			if from_province == null or to_province == null:
+				continue
+			_draw_arrow(from_province.map_position, to_province.map_position, color)
+
+
+func _draw_arrow(from_point: Vector2, to_point: Vector2, color: Color) -> void:
+	var direction := to_point - from_point
+	if direction.length() < 1.0:
+		return
+	direction = direction.normalized()
+	var start := from_point + direction * 34.0
+	var end := to_point - direction * 34.0
+	if start.distance_to(end) < 12.0:
+		return
+
+	_overlay.draw_line(start, end, color, 3.0, true)
+	var side := direction.rotated(PI * 0.5)
+	_overlay.draw_colored_polygon(PackedVector2Array([
+		end,
+		end - direction * 10.0 + side * 5.0,
+		end - direction * 10.0 - side * 5.0,
+	]), color)
 
 
 func _edge_count() -> int:

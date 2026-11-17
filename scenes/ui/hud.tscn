@@ -243,11 +243,44 @@ theme_override_font_sizes/font_size = 13
 horizontal_alignment = 1
 vertical_alignment = 1
 
+[node name="OrdersCard" type="PanelContainer" parent="Root" unique_id=1597063290]
+visible = false
+layout_mode = 0
+anchor_top = 0.0
+anchor_bottom = 0.0
+offset_left = 16.0
+offset_top = 64.0
+offset_right = 300.0
+offset_bottom = 64.0
+mouse_filter = 2
+
+[node name="OrdersBox" type="VBoxContainer" parent="Root/OrdersCard" unique_id=1597063291]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="OrdersTitle" type="Label" parent="Root/OrdersCard/OrdersBox" unique_id=1597063292]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.98, 0.83, 0.45, 1)
+theme_override_font_sizes/font_size = 13
+text = ""
+
+[node name="OrdersScroll" type="ScrollContainer" parent="Root/OrdersCard/OrdersBox" unique_id=1597063293]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="OrdersList" type="VBoxContainer" parent="Root/OrdersCard/OrdersBox/OrdersScroll" unique_id=1597063294]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
 [node name="BattleCard" type="PanelContainer" parent="Root" unique_id=1597063196]
 visible = false
 layout_mode = 0
 anchor_left = 1.0
 anchor_right = 1.0
+anchor_bottom = 0.0
 offset_left = -366.0
 offset_top = 64.0
 offset_right = -16.0
@@ -266,12 +299,16 @@ theme_override_font_sizes/font_size = 13
 text = ""
 autowrap_mode = 2
 
-[node name="BattleBody" type="Label" parent="Root/BattleCard/BattleBox" unique_id=1597063199]
+[node name="BattleScroll" type="ScrollContainer" parent="Root/BattleCard/BattleBox" unique_id=1597063295]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.86, 0.88, 0.95, 1)
-theme_override_font_sizes/font_size = 11
-text = ""
-autowrap_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="BattleList" type="VBoxContainer" parent="Root/BattleCard/BattleBox/BattleScroll" unique_id=1597063296]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
 
 [node name="SettingsPanel" parent="Root" unique_id=1597063200 instance=ExtResource("2_settings")]
 layout_mode = 1

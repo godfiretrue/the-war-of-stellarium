@@ -11,6 +11,10 @@ battle summary, victory/defeat screen, JSON save/load with auto-save each turn.
 The whole UI is localized in Portuguese and English, switchable in-game from a
 settings panel (language + fullscreen) and persisted between runs.
 
+Turns are **simultaneous**: the player queues orders, the bot queues its own
+orders without seeing them, and only then does one snapshot-based resolution
+apply both sides. Pressing March or Recruit never changes the board by itself.
+
 Engine: **Godot 4.7.2-stable** (the brief said 4.6.1; the project was created
 with 4.7 features and runs on the installed editor). GDScript only.
 
@@ -21,14 +25,17 @@ GDScript tasks under `scripts/ai/tasks/`. The tree is:
 ```
 Sequence "Elf turn"
 ├── Recruit                     BTRecruitTask
-└── Selector "Attack or advance"
-    ├── Attack                  BTAttackTask  (fails when no battle happened)
+└── Sequence "Attack, then advance"
+    ├── Attack                  BTAttackTask  (always succeeds)
     └── Advance                 BTAdvanceTask
 ```
 
-Because the selector is exclusive, a turn where the bot fights does **not**
-also advance. That is a deliberate change from the first rule-based version
-(which always advanced) and it makes games shorter — see Balance.
+Attack and advance both run every turn. That is a deliberate change: with the
+old exclusive selector a single available battle suppressed all expansion,
+which left fronts frozen and produced seeds where the war never ended. The
+advance leaf takes undefended neighbours first, then paths toward the enemy
+capital or neutral ground, and refuses a two-way swap with an army already
+marching the other way — see Balance.
 
 ## Layout
 
@@ -59,6 +66,7 @@ scripts/ui/main_menu.gd       menu actions
 scripts/ui/settings_panel.gd  settings overlay logic (shared by menu + HUD)
 scripts/ui/ui_style.gd        shared palette and button styleboxes
 scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
+scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (20 games)
 ```
 
 ## Architecture rules
@@ -66,19 +74,25 @@ scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
 - `Game` is the single source of truth: map + gold/manpower/faction resource.
   It has no node references, so a whole game can be simulated without a scene.
 - `TurnManager` owns the phase machine and emits signals. It never calls the
-  bot or the HUD directly. Phases: `PLAYER_TURN` -> `BOT_TURN` ->
-  `RESOLUTION` -> `NEXT_TURN` -> `PLAYER_TURN`.
-- The bot calls `TurnManager.finish_bot_turn()` when it is done; that keeps AI
-  code out of the turn manager.
-- Player and bot use the **same** `Game.recruit()` / `Game.move()` methods, so
-  the bot cannot break the rules the player follows.
+  bot or the HUD directly. Phases: `PLAYER_PLANNING` -> `BOT_PLANNING` ->
+  `RESOLUTION` -> `NEXT_TURN` -> `PLAYER_PLANNING`.
+- `end_player_turn()` starts bot planning; the bot calls
+  `finish_bot_planning()` when it is done; only then does `_resolve()` run.
+  Keeping AI code out of the turn manager is what makes a headless run a loop
+  of `bot.play_turn()` + the two turn calls.
+- Player and bot use the **same** `Game.queue_move()` / `queue_recruit()` /
+  `cancel_order()` methods and both queue the same plain dictionary orders, so
+  the bot cannot break the rules the player follows and never reads the
+  player's queue (it only sees board state).
+- `GameState.resolve_turn()` is the only code that mutates owners and
+  garrisons. Planning code validates and records; it never applies an action.
 - The behaviour tree only orchestrates. Decision logic lives in
   `BotController` (`recruit_phase`, `attack_phase`, `advance_phase`), and the
   leaves are deliberately duck-typed (`has_method`) so the task scripts do not
   reference `BotController` by class name — that would be a circular class
   dependency.
 - `MapView` renders and hit-tests; it does not mutate game state. `GameHUD`
-  turns clicks into `Game` actions.
+  turns clicks into queued orders.
 - Data values stay English (`territory_type` = "River Town", unit ids, save
   fields). Translation happens only at display time through `Loc`
   (`Loc.territory_type`, `Loc.unit_name`, `Loc.t`). Never translate a value
@@ -106,14 +120,32 @@ scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
   faction resource (Humans: Aether on Plains, Elves: Iron on Mountains) +2.
 - Upkeep per army: `ceil(avg_unit_cost / 15 * troops ^ 1.2)`.
 - Humans pay 0.7x recruitment; Elves get 1.15x income.
-- Movement only between adjacent provinces; moving into an undefended province
-  captures it.
-- One attack per province per round (`acted_provinces`, cleared at resolution).
+- Orders are validated when queued, against the current board **and** the units
+  already committed from the same origin. A province may send many friendly
+  marches but at most one attack order per turn. Recruit gold/manpower are
+  reserved at queue time and refunded by `cancel_order()`.
+- Movement only between adjacent provinces. Units are not removed while
+  planning; the garrison is only read to validate later orders.
+- Resolution works from one snapshot taken before any order:
+  1. recruits join their province's garrison first (they defend, but moves were
+     validated before they existed, so they never march);
+  2. every army leaves its origin at once; what stays behind is that
+     province's only defence;
+  3. destinations resolve in a seed-shuffled order — never faction order — so
+     neither side has first-mover advantage.
+- Defence is the snapshot garrison plus friendly reinforcements arriving this
+  turn. An undefended province is taken without a fight; two factions arriving
+  at the same undefended province fight a field battle; two armies swapping
+  provinces also fight in the field. Field battles reuse `CombatResolver` on a
+  throwaway plains `ProvinceData`.
+- Survivors return to their origin only if their faction still owns it after
+  every capture; otherwise they are lost.
 - Combat: attacker `sum(atk*count)`, defender `sum(def*count) * terrain`
   (Plains 1.0, Mountains 1.25), both x random 0.9-1.1.
   `ratio = att/(att+def)`; attacker loses `ceil(att*(1-ratio)*0.7)`,
   defender loses `ceil(def*ratio*1.0)`.
-- Win: own every province. Lose: own none.
+- Income and upkeep are applied after resolution, then the next planning phase
+  starts. Win: own every province. Lose: own none.
 
 ## World generation
 
@@ -167,38 +199,27 @@ faction. Run it after any change to generation.
 ## Balance findings (measured, not guessed)
 
 `BotController` supports `bot_faction` and `auto_play=false`, which is how the
-AI-vs-AI runs were done. Set `Game.quiet = true` first or the log floods.
+AI-vs-AI runs were done. `scripts/tools/balance_sim.gd` drives 20 fixed seeds
+(`41000..41019`, 400-turn cap, autosave off):
 
-```gdscript
-var human_bot = BotController.new()
-human_bot.bot_faction = 0
-human_bot.auto_play = false
-root.get_node("Map").add_child(human_bot)
-game.quiet = true
-tm.start_game()
-while not tm.game_over:
-    human_bot.play_turn()
-    tm.end_player_turn()
+```
+godot --headless --path . --script res://scripts/tools/balance_sim.gd
 ```
 
-Measured with 16 runs per configuration:
+It queues both sides' orders through the real GameState API and counts queue
+failures, unfinished games and turn length:
 
 | Config | Result |
 |---|---|
-| humans 0.7, elves 1.15, rule-based bot, impatience 3 | humans 16/16, ~9 turns |
-| humans 0.7, elves 1.15, behaviour tree, impatience 3 | humans 14/16, ~5.4 turns |
+| humans 0.7, elves 1.15, simultaneous resolution, 20 games | Elves 19, Humans 1; 5% / 95%; 57.1 turns average; 0 unfinished; 0 queue failures |
 
-**The 45-55% target is not met.** Two separate causes, both structural:
-
-1. The player faction resolves first in a round, so when both sides become
-   impatient the first mover wins the decisive battle.
-2. Conquest snowballs: losing a capital kills recruitment, and provinces left
-   with the 1-troop advance reserve fall quickly, so games now end in ~5 turns.
-
-Fixing 1 needs simultaneous resolution (queue both sides' attacks, resolve
-once). Fixing 2 needs either larger garrisons, lower combat lethality
-(`DEFENDER_LOSS_FACTOR` / `ATTACKER_LOSS_FACTOR`) or upkeep-free home armies.
-Do not tune by cost multipliers alone; measure 20+ runs.
+The first-mover advantage is gone: resolution order is seeded, not faction
+order. The remaining split follows the faction modifiers (Humans pay 0.7x to
+recruit, Elves get 1.15x gold/manpower) plus the Elves' stronger early army.
+A 95/5 split is still lopsided, but the task here was to remove the
+sequential-turn unfairness and make every seed finish, not to rebalance the
+factions. Do not tune by cost multipliers alone; re-measure with the 20-game
+runner above.
 
 ## Conventions and gotchas
 
@@ -242,6 +263,16 @@ Do not tune by cost multipliers alone; measure 20+ runs.
 - Save `VERSION` is **3**. World generation renames/moves generated provinces,
   so old saves cannot be rebuilt: `_migrate` returns `{}` for any version that
   is not the current one and the caller treats that as "no save".
+- Orders are plain dictionaries (`{"type": "move", ...}`), never Resources or
+  actions. Validation happens at queue time, so build orders through
+  `queue_move()` / `queue_recruit()`; `resolve_turn()` trusts what it is given.
+- Saves are written only at the start of a turn with an empty queue, and
+  `SaveSystem.save_game()` refuses when orders are queued. The HUD disables
+  Save for the same reason, so a load always resumes at a clean turn.
+- The Orders and Battle cards are top-anchored and size to their content;
+  `CARD_MAX_HEIGHT_RATIO` caps their scroll areas at 45% of the screen, so long
+  lists scroll instead of pushing the card off-screen. Check both at 1152x648
+  after changing row heights.
 - A `PackedInt32Array` fetched from a `Dictionary`/`Array` with `as` is a
   **copy**; mutate the original or write it back. `PackedInt32Array` has no
   `pop_back` (convert to `Array` first).
@@ -274,13 +305,12 @@ governments/laws, End of the World events, Rats faction.
 
 ## Next steps
 
-1. Simultaneous attack resolution to fix first-mover snowballing.
-2. Lengthen games: raise starting garrisons or lower combat lethality, then
-   re-measure 20+ AI-vs-AI runs.
-3. Optional: author the tree as a `.tres` in the LimboAI editor instead of
+1. Lengthen games and even the split: raise starting garrisons or lower combat
+   lethality, then re-measure with the 20-game runner.
+2. Optional: author the tree as a `.tres` in the LimboAI editor instead of
    code, once the shape is stable.
-4. Optional: the main menu still draws a visibly pixelated planet — replace it
+3. Optional: the main menu still draws a visibly pixelated planet — replace it
    with a downscaled render of the generated field, or hide the planet.
-5. Optional: gamepad navigation for the HUD. Buttons are `focus_mode = NONE`
+4. Optional: gamepad navigation for the HUD. Buttons are `focus_mode = NONE`
    today so keyboard shortcuts never steal focus; a controller pass needs focus
    neighbours and a way to keep Space/M working while a button has focus.

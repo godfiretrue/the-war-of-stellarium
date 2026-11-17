@@ -2,16 +2,20 @@ class_name GameHUD
 extends CanvasLayer
 ## Player-facing HUD and the player's map controller.
 ##
-## Owns the two-step move flow (select a province, press March, click a
-## neighbour), the recruit buttons and the keyboard shortcuts. Every rule
-## change still goes through GameState, so the player and the bot share one
-## rules path.
+## Owns the two-step order flow (select a province, press March, click a
+## neighbour), the recruit buttons, the queued-orders list and the keyboard
+## shortcuts. Every rule change still goes through GameState, so the player and
+## the bot share one rules path and the player also only queues orders.
 ##
 ## Layout lives in scenes/ui/hud.tscn; this script only fills it. All text goes
 ## through Loc, so changing the language retranslates the HUD in place.
 
 const PLAYER := Balance.PLAYER_FACTION
-const BATTLE_VISIBLE_SECONDS := 7.0
+const BATTLE_VISIBLE_SECONDS := 10.0
+## Cards grow with their content but never past this share of the screen.
+const CARD_MAX_HEIGHT_RATIO := 0.45
+const ORDER_ROW_HEIGHT := 44.0
+const BATTLE_ROW_HEIGHT := 64.0
 
 var game: GameState
 var turn_manager: Node
@@ -21,7 +25,7 @@ var selected_province_id: String = ""
 var march_origin_id: String = ""
 
 var _battle_token := 0
-var _last_battle: Dictionary = {}
+var _last_battles: Array = []
 var _game_over_winner := -2
 
 @onready var _faction_dot: ColorRect = $Root/TopStrip/TopMargin/TopRow/FactionDot
@@ -46,9 +50,14 @@ var _game_over_winner := -2
 @onready var _options: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Options
 @onready var _menu: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Menu
 @onready var _hint: Label = $Root/Hint
+@onready var _orders_card: PanelContainer = $Root/OrdersCard
+@onready var _orders_title: Label = $Root/OrdersCard/OrdersBox/OrdersTitle
+@onready var _orders_scroll: ScrollContainer = $Root/OrdersCard/OrdersBox/OrdersScroll
+@onready var _orders_list: VBoxContainer = $Root/OrdersCard/OrdersBox/OrdersScroll/OrdersList
 @onready var _battle_card: PanelContainer = $Root/BattleCard
 @onready var _battle_title: Label = $Root/BattleCard/BattleBox/BattleTitle
-@onready var _battle_body: Label = $Root/BattleCard/BattleBox/BattleBody
+@onready var _battle_scroll: ScrollContainer = $Root/BattleCard/BattleBox/BattleScroll
+@onready var _battle_list: VBoxContainer = $Root/BattleCard/BattleBox/BattleScroll/BattleList
 @onready var _settings_panel: SettingsPanel = $Root/SettingsPanel
 @onready var _settings: GameSettings = get_node("/root/Settings")
 
@@ -80,8 +89,9 @@ func _ready() -> void:
 
 func _connect_signals() -> void:
 	game.state_changed.connect(_refresh)
-	game.battle_resolved.connect(_on_battle_resolved)
+	game.orders_changed.connect(_refresh_orders)
 	turn_manager.phase_changed.connect(_on_phase_changed)
+	turn_manager.resolution_finished.connect(_on_resolution_finished)
 	turn_manager.game_finished.connect(_on_game_finished)
 	_settings.changed.connect(_retranslate)
 
@@ -119,6 +129,8 @@ func _style() -> void:
 	UiStyle.apply_ghost_button(_menu)
 
 	_battle_card.add_theme_stylebox_override("panel", UiStyle.panel_box())
+	_orders_card.add_theme_stylebox_override("panel", UiStyle.panel_box())
+	_orders_card.visible = false
 
 
 func _pill(label: Label, accent: Color) -> void:
@@ -146,6 +158,7 @@ func _refresh() -> void:
 	_refresh_static_text()
 	_refresh_selection()
 	_refresh_buttons()
+	_refresh_orders()
 
 
 ## Button labels and tooltips that do not depend on the selection.
@@ -157,6 +170,7 @@ func _refresh_static_text() -> void:
 	_options.text = Loc.t("options")
 	_menu.text = Loc.t("menu")
 
+	_orders_title.text = Loc.t("orders_title")
 	_march.tooltip_text = Loc.t("tip_march")
 	_end_turn.tooltip_text = Loc.t("tip_end_turn")
 	_save.tooltip_text = Loc.t("tip_save")
@@ -236,12 +250,15 @@ func _clear_stats() -> void:
 
 
 func _refresh_buttons() -> void:
-	var player_turn: bool = turn_manager.is_player_turn()
-	_end_turn.disabled = not player_turn
+	var player_planning: bool = turn_manager.is_player_planning()
+	_end_turn.disabled = not player_planning
+
+	# Saves are only allowed at the start of a turn, before any order is queued.
+	_save.disabled = not player_planning or game.has_queued_orders()
 
 	var province := _selected_province()
 	var owned: bool = province != null and province.is_owned_by(PLAYER)
-	var can_march := player_turn and owned and province.total_troops() > 0
+	var can_march := player_planning and owned and province.total_troops() > 0
 	_march.disabled = not can_march
 	# March is the expected next step while a move is armed; otherwise ending the
 	# turn is. Only one of them wears the gold primary style at a time.
@@ -253,7 +270,7 @@ func _refresh_buttons() -> void:
 		UiStyle.apply_hud_button(_end_turn)
 
 	var is_city_province := province != null and province.is_city
-	var can_recruit_base := player_turn and owned and is_city_province
+	var can_recruit_base := player_planning and owned and is_city_province
 
 	var unit_ids := UnitCatalog.units_for_faction(PLAYER)
 	var buttons: Array[Button] = [_recruit_a, _recruit_b]
@@ -305,29 +322,29 @@ func _retranslate() -> void:
 		return
 	_faction_name.text = Loc.faction_name(PLAYER)
 	_refresh()
-	# Re-render a battle card only while it is still on screen; a language
+	# Re-render the battle list only while it is still on screen; a language
 	# change must not resurrect one that already timed out.
-	if _battle_card.visible and not _last_battle.is_empty():
-		_show_battle(_last_battle, false)
+	if _battle_card.visible and not _last_battles.is_empty():
+		_render_battles(false)
 
 
 # --- Player actions ------------------------------------------------------
 
 func _on_recruit(index: int) -> void:
-	if not turn_manager.is_player_turn() or selected_province_id.is_empty():
+	if not turn_manager.is_player_planning() or selected_province_id.is_empty():
 		return
 
 	var unit_ids := UnitCatalog.units_for_faction(PLAYER)
 	if index < 0 or index >= unit_ids.size():
 		return
 
-	var result := game.recruit(PLAYER, selected_province_id, unit_ids[index], 1)
+	var result := game.queue_recruit(PLAYER, selected_province_id, unit_ids[index], 1)
 	_hint.text = "" if result.get("ok", false) else Loc.reason(String(result.get("reason", "")))
 	_refresh()
 
 
 func _on_march_pressed() -> void:
-	if not turn_manager.is_player_turn():
+	if not turn_manager.is_player_planning():
 		_hint.text = Loc.t("hint_bot_turn")
 		return
 
@@ -350,7 +367,7 @@ func _on_march_pressed() -> void:
 
 
 func _on_end_turn_pressed() -> void:
-	if not turn_manager.is_player_turn():
+	if not turn_manager.is_player_planning():
 		return
 	_cancel_march()
 	_hint.text = ""
@@ -360,6 +377,9 @@ func _on_end_turn_pressed() -> void:
 
 
 func _on_save_pressed() -> void:
+	if not turn_manager.is_player_planning() or game.has_queued_orders():
+		_hint.text = Loc.t("save_turn_start_only")
+		return
 	var saved := SaveSystem.save_game(game, turn_manager.turn_number)
 	_hint.text = Loc.t("saved") if saved else Loc.t("save_failed")
 
@@ -375,7 +395,10 @@ func _on_settings_closed() -> void:
 
 
 func _on_menu_pressed() -> void:
-	SaveSystem.save_game(game, turn_manager.turn_number)
+	# Only save when the queue is empty, so a resumed game never starts half
+	# planned. Leaving with queued orders simply discards them.
+	if turn_manager.is_player_planning() and not game.has_queued_orders():
+		SaveSystem.save_game(game, turn_manager.turn_number)
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 
 
@@ -392,7 +415,7 @@ func _handle_march_click(target_id: String) -> void:
 	var origin_id := march_origin_id
 	var map := game.map_state
 
-	if not turn_manager.is_player_turn():
+	if not turn_manager.is_player_planning():
 		_cancel_march()
 		return
 
@@ -403,7 +426,7 @@ func _handle_march_click(target_id: String) -> void:
 		return
 
 	var origin := map.get_province(origin_id)
-	var result := game.move(PLAYER, origin_id, target_id, origin.garrison.duplicate())
+	var result := game.queue_move(PLAYER, origin_id, target_id, origin.garrison.duplicate())
 	_cancel_march()
 
 	if not bool(result.get("ok", false)):
@@ -411,12 +434,8 @@ func _handle_march_click(target_id: String) -> void:
 		_refresh()
 		return
 
-	_hint.text = ""
-	var kind := String(result.get("kind", ""))
-	if kind == "move" or bool(result.get("captured", false)):
-		_select(target_id)
-	else:
-		_select(origin_id)
+	_hint.text = Loc.t("hint_order_queued")
+	_select(origin_id)
 
 
 func _cancel_march() -> void:
@@ -473,51 +492,51 @@ func _unhandled_key_input(event: InputEvent) -> void:
 # --- Signals -------------------------------------------------------------
 
 func _on_phase_changed(_phase: int) -> void:
-	if turn_manager.is_player_turn():
+	if turn_manager.is_player_planning():
 		# Clear the wait message when control comes back; leave other feedback
 		# (save result, recruit errors) alone.
 		if _hint.text == Loc.t("hint_bot_turn"):
 			_hint.text = ""
 	else:
 		_cancel_march()
-		# Only the bot's own turn needs the message; resolution blinks past.
-		if turn_manager.phase == 1:
+		# Only bot planning needs the message; resolution blinks past.
+		if turn_manager.is_bot_planning():
 			_hint.text = Loc.t("hint_bot_turn")
 	_refresh()
 
 
-func _on_battle_resolved(result: Dictionary) -> void:
-	_last_battle = result
-	_show_battle(result, true)
+func _on_resolution_finished(summary: Dictionary) -> void:
+	_last_battles = summary.get("battles", [])
+	if _last_battles.is_empty():
+		_battle_card.visible = false
+		return
+	_render_battles(true)
 
 
-func _show_battle(result: Dictionary, reset_timer: bool) -> void:
-	var prov_id := String(result.get("province_id", ""))
-	var province := game.map_state.get_province(prov_id) if (game != null and game.map_state != null) else null
-	var title_template := "battle_field"
-	if province != null and province.is_city:
-		title_template = "battle_siege"
+## Renders every battle of the turn in one scrollable card. `reset_timer` is
+## false on a language change so the existing timeout keeps running.
+func _render_battles(reset_timer: bool) -> void:
+	for child in _battle_list.get_children():
+		_battle_list.remove_child(child)
+		child.queue_free()
 
-	_battle_title.text = Loc.t(title_template, [String(result.get("province_name", "?"))])
-	_battle_body.text = "%s\n%s · %s" % [
-		Loc.t("battle_line", [
-			Loc.faction_name(int(result.get("attacker_faction", 0))),
-			Loc.faction_name(int(result.get("defender_faction", 1))),
-			float(result.get("attacker_power", 0.0)),
-			float(result.get("defender_power", 0.0)),
-		]),
-		Loc.t("battle_losses", [
-			int(result.get("attacker_losses", 0)), int(result.get("defender_losses", 0)),
-		]),
-		Loc.t("battle_captured") if bool(result.get("captured", false)) else Loc.t("battle_held"),
-	]
+	_battle_title.text = Loc.t("battles_title", [_last_battles.size()])
+	_battle_scroll.custom_minimum_size.y = _card_list_height(_last_battles.size(), BATTLE_ROW_HEIGHT)
+	for result_variant in _last_battles:
+		var result: Dictionary = result_variant
+		var label := Label.new()
+		label.text = _battle_text(result)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.add_theme_font_size_override("font_size", 11)
+		label.add_theme_color_override("font_color", UiStyle.TEXT)
+		_battle_list.add_child(label)
 
 	_battle_card.visible = true
 	_battle_card.modulate.a = 1.0
 	if not reset_timer:
 		return
 
-	# Only the newest battle may hide the card; an older timer is cancelled by
+	# Only the newest summary may hide the card; an older timer is cancelled by
 	# comparing the token it captured.
 	_battle_token += 1
 	var token := _battle_token
@@ -529,6 +548,116 @@ func _show_battle(result: Dictionary, reset_timer: bool) -> void:
 			if token == _battle_token:
 				_battle_card.visible = false
 	)
+
+
+func _battle_text(result: Dictionary) -> String:
+	var from_name := String(result.get("from_name", result.get("province_name", "?")))
+	var to_name := String(result.get("to_name", result.get("province_name", "?")))
+	var losses := Loc.t("battle_losses", [
+		int(result.get("attacker_losses", 0)), int(result.get("defender_losses", 0)),
+	])
+
+	if bool(result.get("swap", false)):
+		return "%s — %s" % [Loc.t("battle_swap_line", [from_name, to_name]), losses]
+
+	var title := Loc.t("battle_field", [String(result.get("province_name", "?"))])
+	var province := _province(String(result.get("province_id", "")))
+	if province != null and province.is_city:
+		title = Loc.t("battle_siege", [province.display_name])
+
+	return "%s\n%s\n%s" % [
+		title,
+		Loc.t("battle_line", [
+			Loc.faction_name(int(result.get("attacker_faction", 0))),
+			Loc.faction_name(int(result.get("defender_faction", 1))),
+			float(result.get("attacker_power", 0.0)),
+			float(result.get("defender_power", 0.0)),
+		]),
+		"%s · %s" % [
+			losses,
+			Loc.t("battle_captured") if bool(result.get("captured", false)) else Loc.t("battle_held"),
+		],
+	]
+
+
+# --- Queued orders -------------------------------------------------------
+
+func _refresh_orders() -> void:
+	if game == null or _orders_list == null:
+		return
+	for child in _orders_list.get_children():
+		_orders_list.remove_child(child)
+		child.queue_free()
+
+	var orders := game.queued_orders_for(PLAYER)
+	_orders_card.visible = not orders.is_empty()
+	if orders.is_empty():
+		return
+
+	for index in orders.size():
+		var order: Dictionary = orders[index]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+
+		var label := Label.new()
+		label.text = _order_text(order)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.add_theme_font_size_override("font_size", 11)
+		label.add_theme_color_override("font_color", UiStyle.TEXT)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+
+		var cancel := Button.new()
+		cancel.text = Loc.t("cancel")
+		cancel.custom_minimum_size = Vector2(58, 24)
+		cancel.add_theme_font_size_override("font_size", 11)
+		UiStyle.apply_hud_button(cancel)
+		cancel.pressed.connect(_on_cancel_order.bind(index))
+		row.add_child(cancel)
+
+		_orders_list.add_child(row)
+
+	_orders_scroll.custom_minimum_size.y = _card_list_height(orders.size(), ORDER_ROW_HEIGHT)
+
+
+## Height for a card's scroll area: one row per entry, capped so a long list
+## never pushes the card past the bottom of the screen.
+func _card_list_height(rows: int, row_height: float) -> float:
+	var max_height := get_viewport().get_visible_rect().size.y * CARD_MAX_HEIGHT_RATIO
+	return clampf(float(rows) * row_height, row_height, maxf(max_height - 52.0, row_height))
+
+
+func _order_text(order: Dictionary) -> String:
+	if String(order.get("type", "")) == "move":
+		var units: Dictionary = order.get("units", {})
+		return Loc.t("order_move", [
+			_province_name(String(order.get("from_id", ""))),
+			_province_name(String(order.get("to_id", ""))),
+			CombatResolver.troop_count(units),
+		])
+	return Loc.t("order_recruit", [
+		int(order.get("count", 0)),
+		Loc.unit_name(String(order.get("unit_id", ""))),
+		_province_name(String(order.get("province_id", ""))),
+	])
+
+
+func _on_cancel_order(index: int) -> void:
+	var result := game.cancel_order(PLAYER, index)
+	if not bool(result.get("ok", false)):
+		_hint.text = Loc.reason(String(result.get("reason", "")))
+	_refresh()
+
+
+func _province(province_id: String) -> ProvinceData:
+	if game == null or game.map_state == null or province_id.is_empty():
+		return null
+	return game.map_state.get_province(province_id)
+
+
+func _province_name(province_id: String) -> String:
+	var province := _province(province_id)
+	return province.display_name if province != null else province_id
 
 
 func _on_game_finished(winner: int) -> void:

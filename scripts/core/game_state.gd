@@ -1,12 +1,15 @@
 class_name GameState
 extends Node
-## Authoritative game data: the map plus every faction's stockpiles.
+## Authoritative game data: the map plus every faction's stockpiles and the
+## orders each faction has queued for the current turn.
 ##
-## Autoloaded as "Game". Views read through getters; systems mutate through
-## the action methods. Nothing here touches nodes or scenes, so the whole
-## game can be saved or simulated headlessly.
+## Autoloaded as "Game". Views read through getters; the turn manager calls
+## queue_*() while both sides plan and resolve_turn() once, so no action is
+## applied before both factions have committed. Nothing here touches nodes or
+## scenes, so the whole game can be saved or simulated headlessly.
 
 signal state_changed
+signal orders_changed
 signal battle_resolved(result: Dictionary)
 
 var map_state: MapState
@@ -15,9 +18,8 @@ var manpower: Dictionary = {}
 var faction_resources: Dictionary = {}
 var last_battle: Dictionary = {}
 
-## Provinces that already attacked this round; one attack per province per
-## round keeps battles decisive instead of grinding a defender down in a turn.
-var acted_provinces: Dictionary = {}
+## faction -> Array of order dictionaries. Orders are data, never actions.
+var queued_orders: Dictionary = {}
 
 ## When true, actions and turns do not print. Used by headless balance runs.
 var quiet: bool = false
@@ -39,12 +41,13 @@ func start_new_game(map_seed: int = -1) -> void:
 	manpower.clear()
 	faction_resources.clear()
 	last_battle.clear()
-	acted_provinces.clear()
+	queued_orders.clear()
 
 	for faction: int in factions():
 		gold[faction] = Balance.STARTING_GOLD
 		manpower[faction] = Balance.STARTING_MANPOWER
 		faction_resources[faction] = {"aether": 0, "iron": 0}
+		queued_orders[faction] = []
 
 	state_changed.emit()
 
@@ -160,11 +163,6 @@ func apply_upkeep(faction: int) -> int:
 	return paid
 
 
-## Called by the turn manager between rounds.
-func clear_acted_provinces() -> void:
-	acted_provinces.clear()
-
-
 func can_afford(faction: int, gold_cost: int, manpower_cost: int) -> bool:
 	return get_gold(faction) >= gold_cost and get_manpower(faction) >= manpower_cost
 
@@ -178,10 +176,76 @@ func spend(faction: int, gold_cost: int, manpower_cost: int) -> bool:
 	return true
 
 
-# --- Actions (shared by the player and the bot) --------------------------
+# --- Orders (shared by the player and the bot) ---------------------------
 
-## Recruits units into an owned province. Returns {ok, reason, ...}.
-func recruit(faction: int, province_id: String, unit_id: String, count: int = 1) -> Dictionary:
+## Queues a march/attack. Units are validated against the origin garrison
+## minus anything already queued to leave it; nothing moves until resolution.
+func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary) -> Dictionary:
+	if map_state == null:
+		return _fail("no game in progress")
+
+	var origin := map_state.get_province(from_id)
+	var target := map_state.get_province(to_id)
+	if origin == null or target == null:
+		return _fail("unknown province")
+	if not origin.is_owned_by(faction):
+		return _fail("%s is not yours" % origin.display_name)
+	if from_id == to_id:
+		return _fail("origin and target are the same province")
+	if not map_state.are_adjacent(from_id, to_id):
+		return _fail("%s does not border %s" % [origin.display_name, target.display_name])
+
+	var moving: Dictionary = {}
+	var moving_total := 0
+	for unit_id: String in units.keys():
+		var count := int(units[unit_id])
+		if count <= 0:
+			continue
+		if int(origin.garrison.get(unit_id, 0)) < count:
+			return _fail("not enough %s in %s" % [unit_id, origin.display_name])
+		moving[unit_id] = count
+		moving_total += count
+
+	if moving_total <= 0:
+		return _fail("no troops selected")
+
+	# Troops already committed to other orders from this province cannot leave
+	# twice, even though the garrison itself is not mutated while planning.
+	var committed := _queued_move_units(faction, from_id)
+	for unit_id: String in moving.keys():
+		if int(committed.get(unit_id, 0)) + int(moving[unit_id]) > int(origin.garrison.get(unit_id, 0)):
+			return _fail("not enough %s in %s" % [unit_id, origin.display_name])
+
+	var hostile := not target.is_owned_by(faction) and target.total_troops() > 0
+	if hostile and _queued_attack_count(faction, from_id) >= 1:
+		return _fail("%s has already issued an attack order this turn" % origin.display_name)
+
+	_ensure_queues()
+	queued_orders[faction].append({
+		"type": "move",
+		"faction": faction,
+		"from_id": from_id,
+		"to_id": to_id,
+		"units": moving.duplicate(true),
+	})
+	orders_changed.emit()
+	_log("[order] %s queues %d troops %s -> %s (%s)" % [
+		Balance.faction_name(faction), moving_total, origin.display_name, target.display_name,
+		"attack" if hostile else "march",
+	])
+	return {
+		"ok": true,
+		"kind": "move",
+		"from": from_id,
+		"to": to_id,
+		"troops": moving_total,
+		"hostile": hostile,
+	}
+
+
+## Queues a recruitment. Gold and manpower are reserved immediately and
+## refunded by cancel_order(); the units appear at the start of resolution.
+func queue_recruit(faction: int, province_id: String, unit_id: String, count: int = 1) -> Dictionary:
 	if map_state == null:
 		return _fail("no game in progress")
 
@@ -207,10 +271,21 @@ func recruit(faction: int, province_id: String, unit_id: String, count: int = 1)
 	if not can_afford(faction, total_gold, total_manpower):
 		return _fail("need %d gold and %d manpower" % [total_gold, total_manpower])
 
-	spend(faction, total_gold, total_manpower)
-	province.add_units(unit_id, count)
-	state_changed.emit()
-	_log("[action] %s recruits %d %s in %s (-%dg, -%dmp)" % [
+	if not spend(faction, total_gold, total_manpower):
+		return _fail("need %d gold and %d manpower" % [total_gold, total_manpower])
+
+	_ensure_queues()
+	queued_orders[faction].append({
+		"type": "recruit",
+		"faction": faction,
+		"province_id": province_id,
+		"unit_id": unit_id,
+		"count": count,
+		"gold": total_gold,
+		"manpower": total_manpower,
+	})
+	orders_changed.emit()
+	_log("[order] %s queues %d %s in %s (-%dg, -%dmp)" % [
 		Balance.faction_name(faction), count, unit.display_name, province.display_name,
 		total_gold, total_manpower,
 	])
@@ -225,87 +300,665 @@ func recruit(faction: int, province_id: String, unit_id: String, count: int = 1)
 	}
 
 
-## Moves troops between adjacent provinces, resolving combat when the target
-## is held by the enemy. moves is unit_id -> count.
-func move(faction: int, from_id: String, to_id: String, moves: Dictionary) -> Dictionary:
-	if map_state == null:
-		return _fail("no game in progress")
+## Removes one queued order by its index in that faction's queue. Recruits
+## refund the reserved resources; moves simply stop reserving troops.
+func cancel_order(faction: int, index: int) -> Dictionary:
+	_ensure_queues()
+	var queue: Array = queued_orders.get(faction, [])
+	if index < 0 or index >= queue.size():
+		return _fail("unknown order")
 
-	var origin := map_state.get_province(from_id)
-	var target := map_state.get_province(to_id)
-	if origin == null or target == null:
-		return _fail("unknown province")
-	if not origin.is_owned_by(faction):
-		return _fail("%s is not yours" % origin.display_name)
-	if from_id == to_id:
-		return _fail("origin and target are the same province")
-	if not map_state.are_adjacent(from_id, to_id):
-		return _fail("%s does not border %s" % [origin.display_name, target.display_name])
+	var order: Dictionary = queue[index]
+	if String(order.get("type", "")) == "recruit":
+		var count := int(order.get("count", 0))
+		var unit := UnitCatalog.get_unit(String(order.get("unit_id", "")))
+		if unit != null and count > 0:
+			var costs := unit.costs_for(faction)
+			gold[faction] = get_gold(faction) + int(costs["gold"]) * count
+			manpower[faction] = get_manpower(faction) + int(costs["manpower"]) * count
 
-	var moving: Dictionary = {}
-	var moving_total := 0
-	for unit_id: String in moves.keys():
-		var count := int(moves[unit_id])
-		if count <= 0:
+	queue.remove_at(index)
+	orders_changed.emit()
+	state_changed.emit()
+	_log("[order] %s cancels %s" % [Balance.faction_name(faction), String(order.get("type", "order"))])
+	return {"ok": true, "kind": "cancel", "order": order}
+
+
+func queued_orders_for(faction: int) -> Array:
+	_ensure_queues()
+	var queue: Array = queued_orders.get(faction, [])
+	return queue.duplicate(true)
+
+
+func has_move_order(faction: int, from_id: String) -> bool:
+	_ensure_queues()
+	for order in queued_orders.get(faction, []):
+		if String(order.get("type", "")) != "move":
 			continue
-		if int(origin.garrison.get(unit_id, 0)) < count:
-			return _fail("not enough %s in %s" % [unit_id, origin.display_name])
-		moving[unit_id] = count
-		moving_total += count
+		if String(order.get("from_id", "")) == from_id:
+			return true
+	return false
 
-	if moving_total <= 0:
-		return _fail("no troops selected")
 
-	var hostile := not target.is_owned_by(faction) and target.total_troops() > 0
-	if hostile and acted_provinces.has(from_id):
-		return _fail("%s has already attacked this round" % origin.display_name)
+func has_queued_orders() -> bool:
+	_ensure_queues()
+	for faction: int in queued_orders.keys():
+		var queue: Array = queued_orders[faction]
+		if not queue.is_empty():
+			return true
+	return false
 
-	for unit_id: String in moving.keys():
-		origin.remove_units(unit_id, int(moving[unit_id]))
 
-	# Friendly province, or any province with no garrison: a plain march.
-	if not hostile:
-		if not target.is_owned_by(faction):
-			target.owner_faction = faction
-		for unit_id: String in moving.keys():
-			target.add_units(unit_id, int(moving[unit_id]))
-		state_changed.emit()
-		_log("[action] %s moves %d troops %s -> %s" % [
-			Balance.faction_name(faction), moving_total, origin.display_name, target.display_name,
-		])
-		return {
-			"ok": true,
-			"kind": "move",
-			"from": from_id,
-			"to": to_id,
-			"troops": moving_total,
+func clear_orders() -> void:
+	_ensure_queues()
+	for faction: int in queued_orders.keys():
+		queued_orders[faction].clear()
+	orders_changed.emit()
+
+
+func _ensure_queues() -> void:
+	for faction: int in factions():
+		if not queued_orders.has(faction):
+			queued_orders[faction] = []
+
+
+func _queued_move_units(faction: int, from_id: String) -> Dictionary:
+	_ensure_queues()
+	var total: Dictionary = {}
+	for order in queued_orders.get(faction, []):
+		if String(order.get("type", "")) != "move":
+			continue
+		if String(order.get("from_id", "")) != from_id:
+			continue
+		_merge_units(total, order.get("units", {}))
+	return total
+
+
+func _queued_attack_count(faction: int, from_id: String) -> int:
+	_ensure_queues()
+	var count := 0
+	for order in queued_orders.get(faction, []):
+		if String(order.get("type", "")) != "move":
+			continue
+		if String(order.get("from_id", "")) != from_id:
+			continue
+		var target := map_state.get_province(String(order.get("to_id", "")))
+		if target != null and not target.is_owned_by(faction) and target.total_troops() > 0:
+			count += 1
+	return count
+
+
+# --- Simultaneous resolution ---------------------------------------------
+
+## Applies every queued order against a snapshot taken before any of them.
+## Returns a summary with at least "battles", "recruits", "captures" and
+## "marches". Ownership and garrisons are mutated only here.
+func resolve_turn(turn_number: int = 1) -> Dictionary:
+	var summary := {
+		"turn": turn_number,
+		"battles": [],
+		"recruits": [],
+		"captures": [],
+		"marches": [],
+	}
+	if map_state == null:
+		return summary
+
+	_ensure_queues()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("stellarium:%d:%d" % [map_state.map_seed, turn_number])
+
+	# 1. Snapshot owners and garrisons before any order is applied.
+	var snapshot: Dictionary = {}
+	for province in map_state.provinces:
+		snapshot[province.id] = {
+			"owner": province.owner_faction,
+			"garrison": province.garrison.duplicate(true),
 		}
 
-	# Defended province: battle.
-	var result := CombatResolver.resolve(moving, target, faction)
-	result["from"] = from_id
-	result["to"] = to_id
+	# 2. Recruits appear first, so they can defend but cannot move: moves were
+	# validated against the pre-recruit garrison and never list these units.
+	for faction: int in _shuffled_factions(rng):
+		for order in queued_orders.get(faction, []):
+			if String(order.get("type", "")) != "recruit":
+				continue
+			var province := map_state.get_province(String(order.get("province_id", "")))
+			if province == null:
+				continue
+			var unit_id := String(order.get("unit_id", ""))
+			var count := int(order.get("count", 0))
+			var snap: Dictionary = snapshot[province.id]
+			var garrison: Dictionary = snap["garrison"]
+			garrison[unit_id] = int(garrison.get(unit_id, 0)) + count
+			summary["recruits"].append({
+				"faction": faction,
+				"province": province.id,
+				"province_name": province.display_name,
+				"unit_id": unit_id,
+				"count": count,
+			})
+			_log("[resolve] %s recruits %d %s in %s" % [
+				Balance.faction_name(faction), count, unit_id, province.display_name,
+			])
 
-	var survivors: Dictionary = result["attacker_survivors"]
-	if bool(result["captured"]):
-		target.owner_faction = faction
-		for unit_id: String in survivors.keys():
-			target.add_units(unit_id, int(survivors[unit_id]))
-	else:
-		for unit_id: String in survivors.keys():
-			origin.add_units(unit_id, int(survivors[unit_id]))
+	# 3. Every army leaves its origin at once. `station` is the home garrison
+	# after departures, and is the only defence any province can offer.
+	var station: Dictionary = {}
+	for province_id: String in snapshot.keys():
+		var snap: Dictionary = snapshot[province_id]
+		station[province_id] = (snap["garrison"] as Dictionary).duplicate(true)
 
-	last_battle = result
-	acted_provinces[from_id] = true
+	var moves: Array = []
+	for faction: int in queued_orders.keys():
+		for order in queued_orders.get(faction, []):
+			if String(order.get("type", "")) != "move":
+				continue
+			var from_id := String(order.get("from_id", ""))
+			var units: Dictionary = order.get("units", {}).duplicate(true)
+			if not station.has(from_id):
+				continue
+			var home: Dictionary = station[from_id]
+			for unit_id: String in units.keys():
+				var left := int(home.get(unit_id, 0)) - int(units[unit_id])
+				if left <= 0:
+					home.erase(unit_id)
+				else:
+					home[unit_id] = left
+			moves.append({
+				"faction": int(faction),
+				"from": from_id,
+				"to": String(order.get("to_id", "")),
+				"units": units,
+			})
+			summary["marches"].append({
+				"faction": int(faction),
+				"from": from_id,
+				"to": String(order.get("to_id", "")),
+				"troops": CombatResolver.troop_count(units),
+			})
+
+	# 4. Results are accumulated here and written to the live provinces only at
+	# the end, so no battle can overwrite another battle's outcome and returning
+	# armies always land after every destination is known.
+	var final_owner: Dictionary = {}
+	var final_garrison: Dictionary = {}
+	for province_id: String in snapshot.keys():
+		final_owner[province_id] = int(snapshot[province_id]["owner"])
+		final_garrison[province_id] = (station[province_id] as Dictionary).duplicate(true)
+	var pending_returns: Array = []
+
+	# 5. Swaps: A invades B's province while B invades A's. Both armies meet in
+	# the field with no terrain, and every survivor returns to its own origin.
+	var consumed: Dictionary = {}
+	var swaps: Array = []
+	for index in moves.size():
+		if consumed.has(index):
+			continue
+		var entry: Dictionary = moves[index]
+		var faction := int(entry["faction"])
+		var from_id := String(entry["from"])
+		var to_id := String(entry["to"])
+		if not _is_hostile_move(entry, snapshot):
+			continue
+
+		var rival := -1
+		for other_index in moves.size():
+			if other_index == index or consumed.has(other_index):
+				continue
+			var other: Dictionary = moves[other_index]
+			if int(other["faction"]) == faction:
+				continue
+			if String(other["from"]) != to_id or String(other["to"]) != from_id:
+				continue
+			rival = other_index
+			break
+		if rival < 0:
+			continue
+
+		var rival_faction := int(moves[rival]["faction"])
+		var first_units: Dictionary = {}
+		var second_units: Dictionary = {}
+		var first_orders: Array = []
+		var second_orders: Array = []
+		for other_index in moves.size():
+			if consumed.has(other_index):
+				continue
+			var other: Dictionary = moves[other_index]
+			if int(other["faction"]) == faction and String(other["from"]) == from_id and String(other["to"]) == to_id:
+				_merge_units(first_units, other["units"])
+				first_orders.append(other)
+				consumed[other_index] = true
+			elif int(other["faction"]) == rival_faction and String(other["from"]) == to_id and String(other["to"]) == from_id:
+				_merge_units(second_units, other["units"])
+				second_orders.append(other)
+				consumed[other_index] = true
+
+		swaps.append({
+			"first_faction": faction,
+			"second_faction": rival_faction,
+			"first_from": from_id,
+			"second_from": to_id,
+			"first_units": first_units,
+			"second_units": second_units,
+			"first_orders": first_orders,
+			"second_orders": second_orders,
+		})
+
+	# 6. Group the remaining moves by destination and resolve destinations in a
+	# seeded order, never faction order.
+	var by_target: Dictionary = {}
+	for index in moves.size():
+		if consumed.has(index):
+			continue
+		var entry: Dictionary = moves[index]
+		var to_id := String(entry["to"])
+		if not by_target.has(to_id):
+			by_target[to_id] = []
+		by_target[to_id].append(entry)
+
+	var targets: Array = by_target.keys()
+	_shuffle(targets, rng)
+	for target_id: String in targets:
+		_resolve_destination(
+			target_id, by_target[target_id], snapshot, station, rng, summary,
+			final_owner, final_garrison, pending_returns
+		)
+
+	# 7. Independent swap battles are also ordered by the seed, never by faction.
+	_shuffle(swaps, rng)
+	for swap: Dictionary in swaps:
+		var first_faction := int(swap["first_faction"])
+		var second_faction := int(swap["second_faction"])
+		var first_from := String(swap["first_from"])
+		var second_from := String(swap["second_from"])
+		var result := _field_battle(
+			swap["first_units"], swap["second_units"], first_faction, second_faction, rng
+		)
+		result["province_id"] = first_from
+		var first_province := map_state.get_province(first_from)
+		var second_province := map_state.get_province(second_from)
+		result["province_name"] = first_province.display_name if first_province != null else first_from
+		result["from_id"] = first_from
+		result["to_id"] = second_from
+		result["from_name"] = first_province.display_name if first_province != null else first_from
+		result["to_name"] = second_province.display_name if second_province != null else second_from
+		result["swap"] = true
+		result["captured"] = false
+		summary["battles"].append(result)
+		last_battle = result
+		battle_resolved.emit(result)
+		_log("[battle] swap %s <-> %s: losses %d/%d, survivors return home" % [
+			result["from_name"], result["to_name"],
+			int(result["attacker_losses"]), int(result["defender_losses"]),
+		])
+
+		_pending_returns(result["survivors_a"], swap["first_orders"], first_faction, pending_returns, rng)
+		_pending_returns(result["survivors_b"], swap["second_orders"], second_faction, pending_returns, rng)
+
+	# 8. Survivors return home only if their faction still owns the origin after
+	# every capture has been accounted for; otherwise they are lost.
+	for entry_variant in pending_returns:
+		var entry: Dictionary = entry_variant
+		var origin := String(entry["origin"])
+		if int(final_owner.get(origin, Balance.Faction.NEUTRAL)) != int(entry["faction"]):
+			continue
+		var home: Dictionary = final_garrison.get(origin, {})
+		_merge_units(home, entry["units"])
+		final_garrison[origin] = home
+
+	for province in map_state.provinces:
+		province.owner_faction = int(final_owner[province.id])
+		province.garrison = (final_garrison[province.id] as Dictionary).duplicate(true)
+
+	clear_orders()
 	state_changed.emit()
+	return summary
+
+
+func _resolve_destination(
+	target_id: String,
+	incoming_moves: Array,
+	snapshot: Dictionary,
+	station: Dictionary,
+	rng: RandomNumberGenerator,
+	summary: Dictionary,
+	final_owner: Dictionary,
+	final_garrison: Dictionary,
+	pending_returns: Array,
+) -> void:
+	var owner := int(snapshot[target_id]["owner"])
+	var incoming: Dictionary = {}
+	var orders_by_faction: Dictionary = {}
+	for entry_variant in incoming_moves:
+		var entry: Dictionary = entry_variant
+		var faction := int(entry["faction"])
+		if not incoming.has(faction):
+			incoming[faction] = {}
+			orders_by_faction[faction] = []
+		_merge_units(incoming[faction], entry["units"])
+		orders_by_faction[faction].append(entry)
+
+	# Defence is the snapshot station plus any friendly reinforcement arriving
+	# this turn (rule 3c). Recruits were already folded into the station.
+	var defence: Dictionary = (station[target_id] as Dictionary).duplicate(true)
+	var friendly: Dictionary = incoming.get(owner, {}) if owner != Balance.Faction.NEUTRAL else {}
+	if not friendly.is_empty():
+		_merge_units(defence, friendly)
+
+	var attackers: Dictionary = {}
+	for faction: int in incoming.keys():
+		if faction == owner or faction == Balance.Faction.NEUTRAL:
+			continue
+		attackers[faction] = (incoming[faction] as Dictionary).duplicate(true)
+
+	# No enemy army arrives: friendly reinforcement joins the garrison and a
+	# neutral province with a single army is taken without a fight.
+	if attackers.is_empty():
+		if owner == Balance.Faction.NEUTRAL:
+			if incoming.size() == 1:
+				var only_faction: int = int(incoming.keys()[0])
+				_arrival(target_id, incoming[only_faction], only_faction, summary, final_owner, final_garrison)
+			elif incoming.size() > 1:
+				_resolve_contest(
+					target_id, incoming, orders_by_faction, rng, summary,
+					final_owner, final_garrison, pending_returns
+				)
+		else:
+			final_garrison[target_id] = defence
+		return
+
+	# Undefended (or the owner left): one attacker takes it, two fight a field
+	# battle for it.
+	if defence.is_empty():
+		if attackers.size() == 1:
+			var attacker_faction: int = int(attackers.keys()[0])
+			_arrival(target_id, attackers[attacker_faction], attacker_faction, summary, final_owner, final_garrison)
+		else:
+			_resolve_contest(
+				target_id, attackers, orders_by_faction, rng, summary,
+				final_owner, final_garrison, pending_returns
+			)
+		return
+
+	# Normal attack on a defended province: existing resolver and terrain rules.
+	# Friendly reinforcements are already part of `defence`.
+	if attackers.size() > 1:
+		# With two factions this cannot happen, but seed the choice instead of
+		# letting dictionary order decide.
+		var attacker_ids: Array = attackers.keys()
+		_shuffle(attacker_ids, rng)
+		var first: int = int(attacker_ids[0])
+		attackers = {first: attackers[first]}
+
+	var attacker_faction: int = int(attackers.keys()[0])
+	var attack_units: Dictionary = attackers[attacker_faction]
+	var attacker_orders: Array = orders_by_faction.get(attacker_faction, [])
+
+	var target := map_state.get_province(target_id)
+	if target == null:
+		return
+
+	# Fight on a throwaway province: the live board is written only at the end.
+	var battle_target := ProvinceData.new()
+	battle_target.id = target.id
+	battle_target.display_name = target.display_name
+	battle_target.terrain = target.terrain
+	battle_target.owner_faction = owner
+	battle_target.garrison = defence.duplicate(true)
+	var result := CombatResolver.resolve(attack_units.duplicate(true), battle_target, attacker_faction, rng)
+	result["from_id"] = String(attacker_orders[0]["from"]) if not attacker_orders.is_empty() else ""
+	result["to_id"] = target_id
+	result["from_name"] = _province_name(String(result["from_id"]))
+	result["to_name"] = target.display_name
+	result["field"] = false
+	result["swap"] = false
+	summary["battles"].append(result)
+	last_battle = result
 	battle_resolved.emit(result)
 	_log("[battle] %s -> %s: attack %.1f vs defence %.1f | losses %d/%d | %s" % [
-		origin.display_name, target.display_name,
+		result["from_name"], target.display_name,
 		float(result["attacker_power"]), float(result["defender_power"]),
 		int(result["attacker_losses"]), int(result["defender_losses"]),
 		"CAPTURED" if bool(result["captured"]) else "held",
 	])
+
+	if bool(result["captured"]):
+		final_owner[target_id] = attacker_faction
+		final_garrison[target_id] = (result["attacker_survivors"] as Dictionary).duplicate(true)
+	else:
+		final_garrison[target_id] = battle_target.garrison.duplicate(true)
+		_pending_returns(result["attacker_survivors"], attacker_orders, attacker_faction, pending_returns, rng)
+
+
+## Empty or undefended target with more than one army: field battle, winner by
+## survivors then remaining power, then the seeded RNG.
+func _resolve_contest(
+	target_id: String,
+	incoming: Dictionary,
+	orders_by_faction: Dictionary,
+	rng: RandomNumberGenerator,
+	summary: Dictionary,
+	final_owner: Dictionary,
+	final_garrison: Dictionary,
+	pending_returns: Array,
+) -> void:
+	var factions_in: Array = incoming.keys()
+	_shuffle(factions_in, rng)
+	if factions_in.size() < 2:
+		return
+	var first: int = int(factions_in[0])
+	var second: int = int(factions_in[1])
+	var first_units: Dictionary = incoming[first]
+	var second_units: Dictionary = incoming[second]
+	var result := _field_battle(first_units, second_units, first, second, rng)
+	result["province_id"] = target_id
+	result["province_name"] = _province_name(target_id)
+	result["from_id"] = _first_origin(orders_by_faction.get(first, []))
+	result["to_id"] = _first_origin(orders_by_faction.get(second, []))
+	result["from_name"] = _province_name(String(result["from_id"]))
+	result["to_name"] = _province_name(String(result["to_id"]))
+	result["swap"] = false
+	var winner := _field_winner(first, result["survivors_a"], second, result["survivors_b"], rng)
+	result["captured"] = winner != Balance.Faction.NEUTRAL
+	summary["battles"].append(result)
+	last_battle = result
+	battle_resolved.emit(result)
+	_log("[battle] contest for %s: %s vs %s | losses %d/%d | winner %s" % [
+		result["province_name"], Balance.faction_name(first), Balance.faction_name(second),
+		int(result["attacker_losses"]), int(result["defender_losses"]),
+		Balance.faction_name(winner),
+	])
+
+	if winner == Balance.Faction.NEUTRAL:
+		return
+	if winner == first:
+		final_owner[target_id] = first
+		final_garrison[target_id] = (result["survivors_a"] as Dictionary).duplicate(true)
+		_pending_returns(result["survivors_b"], orders_by_faction.get(second, []), second, pending_returns, rng)
+	else:
+		final_owner[target_id] = second
+		final_garrison[target_id] = (result["survivors_b"] as Dictionary).duplicate(true)
+		_pending_returns(result["survivors_a"], orders_by_faction.get(first, []), first, pending_returns, rng)
+
+
+## Runs the existing combat formula with terrain forced to Plains. The
+## attacker/defender roles are chosen by the seeded RNG, so neither faction has
+## a structural advantage in a field battle.
+func _field_battle(
+	first_units: Dictionary,
+	second_units: Dictionary,
+	first_faction: int,
+	second_faction: int,
+	rng: RandomNumberGenerator,
+) -> Dictionary:
+	var first_is_attacker := rng.randf() < 0.5
+	var attacker_units: Dictionary = first_units if first_is_attacker else second_units
+	var defender_units: Dictionary = second_units if first_is_attacker else first_units
+	var attacker_faction: int = first_faction if first_is_attacker else second_faction
+	var defender_faction: int = second_faction if first_is_attacker else first_faction
+
+	var dummy := ProvinceData.new()
+	dummy.terrain = Balance.Terrain.PLAINS
+	dummy.owner_faction = defender_faction
+	dummy.garrison = defender_units.duplicate(true)
+
+	var result := CombatResolver.resolve(attacker_units.duplicate(true), dummy, attacker_faction, rng)
+	result["field"] = true
+	if first_is_attacker:
+		result["survivors_a"] = result["attacker_survivors"]
+		result["survivors_b"] = result["defender_survivors"]
+	else:
+		result["survivors_a"] = result["defender_survivors"]
+		result["survivors_b"] = result["attacker_survivors"]
 	return result
+
+
+func _field_winner(
+	first_faction: int,
+	first_units: Dictionary,
+	second_faction: int,
+	second_units: Dictionary,
+	rng: RandomNumberGenerator,
+) -> int:
+	var first_troops := CombatResolver.troop_count(first_units)
+	var second_troops := CombatResolver.troop_count(second_units)
+	if first_troops == 0 and second_troops == 0:
+		return Balance.Faction.NEUTRAL
+	if first_troops != second_troops:
+		return first_faction if first_troops > second_troops else second_faction
+
+	var first_power := CombatResolver.attack_power_of(first_units)
+	var second_power := CombatResolver.attack_power_of(second_units)
+	if not is_equal_approx(first_power, second_power):
+		return first_faction if first_power > second_power else second_faction
+	return first_faction if rng.randf() < 0.5 else second_faction
+
+
+## Adds an arriving army to a province's final state and transfers ownership
+## when it was neutral or held by the enemy. Applied only at the end of
+## resolution, never to the live board mid-battle.
+func _arrival(
+	province_id: String,
+	units: Dictionary,
+	faction: int,
+	summary: Dictionary,
+	final_owner: Dictionary,
+	final_garrison: Dictionary,
+) -> void:
+	var owner := int(final_owner.get(province_id, Balance.Faction.NEUTRAL))
+	var garrison: Dictionary = (final_garrison.get(province_id, {}) as Dictionary).duplicate(true)
+	_merge_units(garrison, units)
+	final_garrison[province_id] = garrison
+	if owner == faction:
+		return
+	final_owner[province_id] = faction
+	summary["captures"].append({
+		"faction": faction,
+		"province": province_id,
+		"province_name": _province_name(province_id),
+	})
+	_log("[resolve] %s takes %s" % [Balance.faction_name(faction), _province_name(province_id)])
+
+
+## Splits survivors back to the origins of the orders that contributed them.
+## Returns are queued, not applied: the caller writes them once every capture is
+## known, so a soldier cannot come home to a province lost in the same turn.
+func _pending_returns(
+	survivors: Dictionary,
+	orders: Array,
+	faction: int,
+	pending_returns: Array,
+	rng: RandomNumberGenerator,
+) -> void:
+	if orders.is_empty():
+		return
+	var contributed: Dictionary = {}
+	for entry_variant in orders:
+		var entry: Dictionary = entry_variant
+		_merge_units(contributed, entry["units"])
+
+	var shuffled: Array = orders.duplicate()
+	_shuffle(shuffled, rng)
+	var per_origin: Dictionary = {}
+	for entry_variant in shuffled:
+		var entry: Dictionary = entry_variant
+		per_origin[String(entry["from"])] = {}
+
+	for unit_id: String in survivors.keys():
+		var total_survivors := int(survivors[unit_id])
+		if total_survivors <= 0:
+			continue
+		var total_contributed := int(contributed.get(unit_id, 0))
+		if total_contributed <= 0:
+			continue
+		var shares: Array = []
+		var assigned := 0
+		for entry_variant in shuffled:
+			var entry: Dictionary = entry_variant
+			var share := int(floor(
+				float(total_survivors) * float(int(entry["units"].get(unit_id, 0))) / float(total_contributed)
+			))
+			shares.append(share)
+			assigned += share
+		var leftover := total_survivors - assigned
+		for i in shares.size():
+			if leftover <= 0:
+				break
+			shares[i] = int(shares[i]) + 1
+			leftover -= 1
+		for i in shares.size():
+			var share := int(shares[i])
+			if share <= 0:
+				continue
+			var origin := String((shuffled[i] as Dictionary)["from"])
+			var origin_units: Dictionary = per_origin[origin]
+			origin_units[unit_id] = int(origin_units.get(unit_id, 0)) + share
+
+	for origin: String in per_origin.keys():
+		var units: Dictionary = per_origin[origin]
+		if units.is_empty():
+			continue
+		pending_returns.append({"origin": origin, "faction": faction, "units": units})
+
+
+func _is_hostile_move(entry: Dictionary, snapshot: Dictionary) -> bool:
+	var target_owner := int(snapshot[String(entry["to"])]["owner"])
+	return target_owner != int(entry["faction"]) and target_owner != Balance.Faction.NEUTRAL
+
+
+func _merge_units(into: Dictionary, from: Dictionary) -> void:
+	for unit_id: String in from.keys():
+		var count := int(from[unit_id])
+		if count <= 0:
+			continue
+		into[unit_id] = int(into.get(unit_id, 0)) + count
+
+
+func _first_origin(orders: Array) -> String:
+	if orders.is_empty():
+		return ""
+	return String(orders[0]["from"])
+
+
+func _province_name(province_id: String) -> String:
+	var province := map_state.get_province(province_id) if map_state != null else null
+	return province.display_name if province != null else province_id
+
+
+func _shuffled_factions(rng: RandomNumberGenerator) -> Array:
+	var result: Array = factions()
+	_shuffle(result, rng)
+	return result
+
+
+## Fisher-Yates with the resolution RNG, so conflict order is seeded and never
+## derived from faction ids or dictionary order.
+func _shuffle(items: Array, rng: RandomNumberGenerator) -> void:
+	for i in range(items.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var swap_value: Variant = items[i]
+		items[i] = items[j]
+		items[j] = swap_value
 
 
 func _fail(reason: String) -> Dictionary:

@@ -1,12 +1,14 @@
 extends Node
 ## Turn phase machine, autoloaded as "TurnManager".
 ##
-## Phases: PLAYER_TURN -> BOT_TURN -> RESOLUTION -> NEXT_TURN -> PLAYER_TURN.
+## Phases: PLAYER_PLANNING -> BOT_PLANNING -> RESOLUTION -> NEXT_TURN ->
+## PLAYER_PLANNING. Both sides queue orders while planning; nothing touches the
+## board until _resolve() applies every order against one snapshot.
 ## Systems listen to the signals instead of calling each other: the bot reacts
 ## to turn_started(), the HUD to phase_changed(), the map to state_changed().
 ##
-## The BOT_TURN phase ends when the bot calls finish_bot_turn(), which keeps
-## this script free of AI code.
+## The BOT_PLANNING phase ends when the bot calls finish_bot_planning(), which
+## keeps this script free of AI code.
 ##
 ## The Game singleton is resolved through the tree (not by bare name) so the
 ## script also compiles in editors whose autoload cache is stale.
@@ -17,7 +19,7 @@ signal phase_changed(phase: int)
 signal resolution_finished(summary: Dictionary)
 signal game_finished(winner: int)
 
-enum Phase { PLAYER_TURN, BOT_TURN, RESOLUTION, NEXT_TURN, GAME_OVER }
+enum Phase { PLAYER_PLANNING, BOT_PLANNING, RESOLUTION, NEXT_TURN, GAME_OVER }
 
 const PLAYER_FACTION := Balance.Faction.HUMANS
 const BOT_FACTION := Balance.Faction.ELVES
@@ -27,6 +29,8 @@ var current_faction: int = PLAYER_FACTION
 var turn_number: int = 1
 var game_over: bool = false
 var last_resolution: Dictionary = {}
+## Headless simulations turn this off so they never touch the player's save.
+var autosave: bool = true
 
 var game: GameState
 
@@ -35,14 +39,16 @@ func _ready() -> void:
 	game = get_node_or_null("/root/Game") as GameState
 
 
-func start_game() -> void:
+## Starts a fresh campaign. Pass a seed to rebuild a specific world, which is
+## what lets balance runs compare factions on identical maps.
+func start_game(map_seed: int = -1) -> void:
 	if game == null:
 		_ready()
 	game_over = false
 	turn_number = 1
 	last_resolution = {}
-	game.start_new_game()
-	_begin_player_turn()
+	game.start_new_game(map_seed)
+	_begin_player_planning()
 
 
 ## Starts a fresh game from a loaded save. The map state is already restored;
@@ -53,19 +59,22 @@ func resume_game(saved_turn: int) -> void:
 	game_over = false
 	turn_number = maxi(saved_turn, 1)
 	last_resolution = {}
-	_begin_player_turn()
+	game.clear_orders()
+	_begin_player_planning()
 
 
+## The player has finished issuing orders. The bot now plans in isolation.
 func end_player_turn() -> void:
-	if game_over or phase != Phase.PLAYER_TURN:
+	if game_over or phase != Phase.PLAYER_PLANNING:
 		return
 	turn_ended.emit(current_faction)
-	_start_bot_turn()
+	_start_bot_planning()
 
 
-## Called by the bot when it has finished all of its actions for this turn.
-func finish_bot_turn() -> void:
-	if game_over or phase != Phase.BOT_TURN:
+## Called by the bot when it has queued all of its orders for this turn. Only
+## this can start resolution, so nothing is applied before both sides commit.
+func finish_bot_planning() -> void:
+	if game_over or phase != Phase.BOT_PLANNING:
 		return
 	turn_ended.emit(current_faction)
 	_resolve()
@@ -77,16 +86,20 @@ func _log(message: String) -> void:
 	print(message)
 
 
-func is_player_turn() -> bool:
-	return not game_over and phase == Phase.PLAYER_TURN
+func is_player_planning() -> bool:
+	return not game_over and phase == Phase.PLAYER_PLANNING
+
+
+func is_bot_planning() -> bool:
+	return not game_over and phase == Phase.BOT_PLANNING
 
 
 func phase_name() -> String:
 	match phase:
-		Phase.PLAYER_TURN:
-			return "Player turn"
-		Phase.BOT_TURN:
-			return "Elves turn"
+		Phase.PLAYER_PLANNING:
+			return "Player planning"
+		Phase.BOT_PLANNING:
+			return "Elves planning"
 		Phase.RESOLUTION:
 			return "Resolution"
 		Phase.NEXT_TURN:
@@ -99,9 +112,9 @@ func phase_name() -> String:
 ## Compact phase label for the top bar.
 func phase_short_name() -> String:
 	match phase:
-		Phase.PLAYER_TURN:
+		Phase.PLAYER_PLANNING:
 			return "Player"
-		Phase.BOT_TURN:
+		Phase.BOT_PLANNING:
 			return "Elves"
 		Phase.RESOLUTION:
 			return "Resolution"
@@ -112,17 +125,17 @@ func phase_short_name() -> String:
 	return "?"
 
 
-func _begin_player_turn() -> void:
+func _begin_player_planning() -> void:
 	current_faction = PLAYER_FACTION
-	phase = Phase.PLAYER_TURN
+	phase = Phase.PLAYER_PLANNING
 	phase_changed.emit(phase)
 	_log("[turn] turn %d — %s" % [turn_number, phase_name()])
 	turn_started.emit(current_faction)
 
 
-func _start_bot_turn() -> void:
+func _start_bot_planning() -> void:
 	current_faction = BOT_FACTION
-	phase = Phase.BOT_TURN
+	phase = Phase.BOT_PLANNING
 	phase_changed.emit(phase)
 	_log("[turn] turn %d — %s" % [turn_number, phase_name()])
 	turn_started.emit(current_faction)
@@ -132,9 +145,12 @@ func _resolve() -> void:
 	phase = Phase.RESOLUTION
 	phase_changed.emit(phase)
 
-	game.clear_acted_provinces()
+	# Every queued order resolves against one snapshot; the queue is empty by
+	# the time this returns.
+	var summary := game.resolve_turn(turn_number)
+	summary["income"] = {}
+	summary["upkeep"] = {}
 
-	var summary := {"turn": turn_number, "income": {}, "upkeep": {}}
 	for faction: int in [PLAYER_FACTION, BOT_FACTION]:
 		var income := game.apply_income(faction)
 		var upkeep := game.apply_upkeep(faction)
@@ -154,8 +170,12 @@ func _resolve() -> void:
 	phase = Phase.NEXT_TURN
 	phase_changed.emit(phase)
 	turn_number += 1
-	SaveSystem.save_game(game, turn_number)
-	_begin_player_turn()
+
+	# Saves are only written at the start of a turn, with no orders queued, so
+	# loading can never resume half-planned.
+	if autosave and not game.has_queued_orders():
+		SaveSystem.save_game(game, turn_number)
+	_begin_player_planning()
 
 
 func _check_game_over() -> bool:

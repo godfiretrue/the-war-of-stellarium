@@ -6,16 +6,17 @@ extends Node
 ##
 ##   Sequence "Elf turn"
 ##   ├── Recruit                     (BTRecruitTask)
-##   └── Selector "Attack or advance"
-##       ├── Attack                  (BTAttackTask, fails when no battle)
+##   └── Sequence "Attack, then advance"
+##       ├── Attack                  (BTAttackTask)
 ##       └── Advance                 (BTAdvanceTask)
 ##
 ## The tasks only orchestrate; the decision logic stays in this class and uses
-## the same Game.recruit()/Game.move() calls as the player, so the bot can
-## never break the rules the player is bound by.
+## the same Game.queue_recruit()/Game.queue_move() calls as the player, so the
+## bot can never break the rules the player is bound by and never sees the
+## enemy's queued orders.
 ##
-## bot_faction and auto_play are exported so the same script can drive the
-## player side headlessly for balance simulations (see AI_CONTEXT.md).
+## bot_faction and auto_play are exported so the same script can drive either
+## side headlessly for balance simulations (see AI_CONTEXT.md).
 
 @export var bot_faction: int = Balance.Faction.ELVES
 @export var auto_play: bool = true
@@ -57,7 +58,7 @@ func _on_turn_started(faction: int) -> void:
 	if bot_faction == Balance.PLAYER_FACTION:
 		turn_manager.end_player_turn()
 	else:
-		turn_manager.finish_bot_turn()
+		turn_manager.finish_bot_planning()
 
 
 # --- Behaviour tree -------------------------------------------------------
@@ -93,14 +94,17 @@ func play_turn() -> void:
 
 func build_behavior_tree() -> BehaviorTree:
 	var tree := BehaviorTree.new()
-	tree.description = "Elf turn: recruit, then attack if possible, otherwise advance."
+	tree.description = "Elf turn: recruit, attack, then advance wherever ground is open."
 
 	var root := BTSequence.new()
 	root.set_custom_name("Elf turn")
 	root.add_child(BTRecruitTask.new())
 
-	var military := BTSelector.new()
-	military.set_custom_name("Attack or advance")
+	# Attack and advance both run every turn. Making them alternatives let one
+	# available battle suppress all expansion, which produced fronts that never
+	# moved and wars that never ended.
+	var military := BTSequence.new()
+	military.set_custom_name("Attack, then advance")
 	military.add_child(BTAttackTask.new())
 	military.add_child(BTAdvanceTask.new())
 	root.add_child(military)
@@ -136,7 +140,7 @@ func recruit_phase() -> void:
 
 		if choice.is_empty():
 			break
-		var result := game.recruit(bot_faction, province.id, choice, 1)
+		var result := game.queue_recruit(bot_faction, province.id, choice, 1)
 		if not result.get("ok", false):
 			break
 
@@ -156,7 +160,7 @@ func _recruitment_province() -> ProvinceData:
 
 # --- Rule 2: attack -------------------------------------------------------
 
-## Returns the number of battles fought this turn.
+## Returns the number of attack orders queued this turn.
 func attack_phase() -> int:
 	var battles := _execute_attacks(false)
 	if battles > 0:
@@ -173,22 +177,24 @@ func attack_phase() -> int:
 	return battles
 
 
+## Queues at most one attack per owned province. A province that already has a
+## march order is skipped, which is the bot's copy of the player's "one attack
+## order per province" rule.
 func _execute_attacks(ignore_odds: bool) -> int:
 	var battles := 0
-	var acted := true
-	while acted and battles < MAX_BATTLES_PER_TURN:
-		acted = false
-		for province in game.map_state.provinces_owned_by(bot_faction):
-			if province.total_troops() <= 0:
-				continue
-			var target := best_attack_target(province, ignore_odds)
-			if target == null:
-				continue
-			var result := game.move(bot_faction, province.id, target.id, province.garrison.duplicate())
-			if result.get("ok", false):
-				battles += 1
-				acted = true
-				break
+	for province in game.map_state.provinces_owned_by(bot_faction):
+		if battles >= MAX_BATTLES_PER_TURN:
+			break
+		if province.total_troops() <= 0:
+			continue
+		if game.has_move_order(bot_faction, province.id):
+			continue
+		var target := best_attack_target(province, ignore_odds)
+		if target == null:
+			continue
+		var result := game.queue_move(bot_faction, province.id, target.id, province.garrison.duplicate())
+		if result.get("ok", false):
+			battles += 1
 	return battles
 
 
@@ -215,12 +221,19 @@ func best_attack_target(province: ProvinceData, ignore_odds: bool = false) -> Pr
 # --- Rule 3: advance ------------------------------------------------------
 
 func advance_phase() -> void:
+	# Undefended ground first. Without this a province can spend every turn
+	# shuffling its army toward the front while an empty enemy province sits
+	# next door, and the war never ends.
+	_expand_into_open_ground()
+
 	var enemy_faction := _enemy_faction()
 	var enemy_capital := game.map_state.capital_of(enemy_faction)
 	var use_capital := enemy_capital != null and enemy_capital.is_owned_by(enemy_faction)
 
 	for province in game.map_state.provinces_owned_by(bot_faction):
 		if province.total_troops() <= 0:
+			continue
+		if game.has_move_order(bot_faction, province.id):
 			continue
 
 		var reserve := CAPITAL_MIN_GARRISON if province.is_capital else 1
@@ -234,13 +247,69 @@ func advance_phase() -> void:
 		if step == null:
 			step = _nearest_enemy_step(province.id)
 		if step == null:
+			# An enemy capital can fall while neutral ground remains. Without this
+			# fallback the bot would stand still forever instead of taking it.
+			step = _nearest_open_step(province.id)
+		if step == null:
 			continue
 
-		# Never walk into a defended enemy province; rule 2 decides battles.
-		if step.total_troops() > 0 and not step.is_owned_by(bot_faction):
+		# Never walk into a defended foreign province; rule 2 decides battles.
+		if not _can_enter(step):
+			continue
+		# Two stacks must not trade places forever: if the step already marches
+		# back here, leave this army in place for a turn.
+		if _has_queued_move(bot_faction, step.id, province.id):
 			continue
 
-		game.move(bot_faction, province.id, step.id, sending)
+		game.queue_move(bot_faction, province.id, step.id, sending)
+
+
+## Takes adjacent provinces that cannot defend themselves, preferring enemy
+## land over neutral ground. Only visible board state is read.
+func _expand_into_open_ground() -> void:
+	for province in game.map_state.provinces_owned_by(bot_faction):
+		if province.total_troops() <= 0:
+			continue
+		if game.has_move_order(bot_faction, province.id):
+			continue
+
+		var reserve := CAPITAL_MIN_GARRISON if province.is_capital else 1
+		var sending := _withhold(province.garrison.duplicate(), reserve)
+		if CombatResolver.troop_count(sending) <= 0:
+			continue
+
+		var target := _best_open_neighbor(province)
+		if target == null:
+			continue
+		game.queue_move(bot_faction, province.id, target.id, sending)
+
+
+func _best_open_neighbor(province: ProvinceData) -> ProvinceData:
+	var neutral: ProvinceData = null
+	for target in game.map_state.neighbors_of(province.id):
+		if target.is_owned_by(bot_faction):
+			continue
+		if target.total_troops() > 0:
+			continue
+		if not target.is_neutral():
+			return target
+		if neutral == null:
+			neutral = target
+	return neutral
+
+
+## An army may enter friendly land or an undefended province without fighting.
+func _can_enter(province: ProvinceData) -> bool:
+	return province.is_owned_by(bot_faction) or province.total_troops() <= 0
+
+
+func _has_queued_move(faction: int, from_id: String, to_id: String) -> bool:
+	for order in game.queued_orders_for(faction):
+		if String(order.get("type", "")) != "move":
+			continue
+		if String(order.get("from_id", "")) == from_id and String(order.get("to_id", "")) == to_id:
+			return true
+	return false
 
 
 ## One graph step toward goal_id. Hostile garrisons are ignored here: the
@@ -283,9 +352,30 @@ func _nearest_enemy_step(from_id: String) -> ProvinceData:
 			came_from[neighbor.id] = current
 			if not neighbor.is_owned_by(bot_faction) and not neighbor.is_neutral():
 				var step := _first_step(came_from, from_id, neighbor.id)
-				if step != null and step.is_owned_by(bot_faction):
+				if step != null and _can_enter(step):
 					return step
 			frontier.append(neighbor.id)
+
+	return null
+
+
+## Nearest neutral province, walked through friendly land. Returns the first
+## step of the path, which may be a neutral province itself.
+func _nearest_open_step(from_id: String) -> ProvinceData:
+	var map := game.map_state
+	var frontier: Array[String] = [from_id]
+	var came_from: Dictionary = {from_id: ""}
+
+	while not frontier.is_empty():
+		var current: String = frontier.pop_front()
+		for neighbor in map.neighbors_of(current):
+			if came_from.has(neighbor.id):
+				continue
+			came_from[neighbor.id] = current
+			if neighbor.is_neutral() and neighbor.total_troops() <= 0:
+				return _first_step(came_from, from_id, neighbor.id)
+			if neighbor.is_owned_by(bot_faction):
+				frontier.append(neighbor.id)
 
 	return null
 
