@@ -3,10 +3,15 @@ extends CanvasLayer
 ## Player-facing HUD and the player's map controller.
 ##
 ## Owns the two-step move flow (select a province, press March, click a
-## neighbour) and the recruit buttons. Every rule change still goes through
-## GameState, so the player and the bot share one rules path.
+## neighbour), the recruit buttons and the keyboard shortcuts. Every rule
+## change still goes through GameState, so the player and the bot share one
+## rules path.
+##
+## Layout lives in scenes/ui/hud.tscn; this script only fills it. All text goes
+## through Loc, so changing the language retranslates the HUD in place.
 
 const PLAYER := Balance.PLAYER_FACTION
+const BATTLE_VISIBLE_SECONDS := 7.0
 
 var game: GameState
 var turn_manager: Node
@@ -15,19 +20,37 @@ var map_view: MapView
 var selected_province_id: String = ""
 var march_origin_id: String = ""
 
-@onready var _gold: Label = $Root/TopStrip/TopRow/Gold
-@onready var _manpower: Label = $Root/TopStrip/TopRow/Manpower
-@onready var _resource: Label = $Root/TopStrip/TopRow/Resource
-@onready var _turn: Label = $Root/TopStrip/TopRow/Turn
-@onready var _info: Label = $Root/BottomStrip/BottomRow/Info
-@onready var _recruit_a: Button = $Root/BottomStrip/BottomRow/RecruitA
-@onready var _recruit_b: Button = $Root/BottomStrip/BottomRow/RecruitB
-@onready var _march: Button = $Root/BottomStrip/BottomRow/March
-@onready var _end_turn: Button = $Root/BottomStrip/BottomRow/EndTurn
+var _battle_token := 0
+var _last_battle: Dictionary = {}
+var _game_over_winner := -2
+
+@onready var _faction_dot: ColorRect = $Root/TopStrip/TopMargin/TopRow/FactionDot
+@onready var _faction_name: Label = $Root/TopStrip/TopMargin/TopRow/FactionName
+@onready var _gold: Label = $Root/TopStrip/TopMargin/TopRow/Gold
+@onready var _manpower: Label = $Root/TopStrip/TopMargin/TopRow/Manpower
+@onready var _resource: Label = $Root/TopStrip/TopMargin/TopRow/Resource
+@onready var _turn_badge: PanelContainer = $Root/TopStrip/TopMargin/TopRow/TurnBadge
+@onready var _turn: Label = $Root/TopStrip/TopMargin/TopRow/TurnBadge/Turn
+@onready var _accent_bar: ColorRect = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/AccentBar
+@onready var _name: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/ProvinceName
+@onready var _meta: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/ProvinceMeta
+@onready var _troops: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Troops
+@onready var _attack: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Attack
+@onready var _defense: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Defense
+@onready var _income: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Income
+@onready var _recruit_a: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/RecruitA
+@onready var _recruit_b: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/RecruitB
+@onready var _march: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/March
+@onready var _end_turn: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/EndTurn
+@onready var _save: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Save
+@onready var _options: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Options
+@onready var _menu: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Menu
 @onready var _hint: Label = $Root/Hint
-@onready var _battle: Label = $Root/Battle
-@onready var _save: Button = $Root/BottomStrip/BottomRow/Save
-@onready var _menu: Button = $Root/BottomStrip/BottomRow/Menu
+@onready var _battle_card: PanelContainer = $Root/BattleCard
+@onready var _battle_title: Label = $Root/BattleCard/BattleBox/BattleTitle
+@onready var _battle_body: Label = $Root/BattleCard/BattleBox/BattleBody
+@onready var _settings_panel: SettingsPanel = $Root/SettingsPanel
+@onready var _settings: GameSettings = get_node("/root/Settings")
 
 
 func _ready() -> void:
@@ -39,10 +62,28 @@ func _ready() -> void:
 		push_error("GameHUD: Game/TurnManager autoloads are missing")
 		return
 
+	_style()
+	_connect_signals()
+
+	_battle_card.visible = false
+	_hint.text = ""
+
+	if game.map_state != null:
+		var capital := game.map_state.capital_of(PLAYER)
+		if capital != null:
+			_select(capital.id)
+		else:
+			_refresh()
+	else:
+		_refresh()
+
+
+func _connect_signals() -> void:
 	game.state_changed.connect(_refresh)
 	game.battle_resolved.connect(_on_battle_resolved)
 	turn_manager.phase_changed.connect(_on_phase_changed)
 	turn_manager.game_finished.connect(_on_game_finished)
+	_settings.changed.connect(_retranslate)
 
 	if map_view != null:
 		map_view.province_clicked.connect(_on_map_clicked)
@@ -52,61 +93,39 @@ func _ready() -> void:
 	_march.pressed.connect(_on_march_pressed)
 	_end_turn.pressed.connect(_on_end_turn_pressed)
 	_save.pressed.connect(_on_save_pressed)
+	_options.pressed.connect(_open_settings)
 	_menu.pressed.connect(_on_menu_pressed)
-
-	_fit_layout()
-
-	_battle.text = ""
-	_hint.text = ""
-
-	if game != null and game.map_state != null:
-		var capital := game.map_state.capital_of(PLAYER)
-		if capital != null:
-			_select(capital.id)
-	else:
-		_refresh()
+	_settings_panel.closed.connect(_on_settings_closed)
 
 
-# --- Layout --------------------------------------------------------------
+# --- Look ----------------------------------------------------------------
 
-## Keeps every HUD text inside the screen. Hint and Battle are free-floating
-## labels with no wrapping in the scene, so long text used to grow off-screen.
-## Here they get a fixed box, word wrap and clipping; Info is clipped to its row.
-func _fit_layout() -> void:
-	_info.custom_minimum_size = Vector2(280, 60)
-	_info.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_info.clip_text = false
+func _style() -> void:
+	_faction_dot.color = UiStyle.HUMAN
+	_faction_name.add_theme_color_override("font_color", UiStyle.TEXT)
+	_faction_name.text = Loc.faction_name(PLAYER)
 
-	# Hint: single line banner just above the bottom strip.
-	_hint.anchor_left = 0.0
-	_hint.anchor_right = 1.0
-	_hint.anchor_top = 1.0
-	_hint.anchor_bottom = 1.0
-	_hint.offset_left = 18.0
-	_hint.offset_right = -18.0
-	_hint.offset_top = -152.0
-	_hint.offset_bottom = -126.0
-	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint.clip_text = true
+	_pill(_gold, Color(0.91, 0.77, 0.42))
+	_pill(_manpower, Color(0.56, 0.78, 0.91))
+	_pill(_resource, Color(0.79, 0.65, 0.91))
+	_turn.add_theme_color_override("font_color", UiStyle.GOLD)
 
-	# Battle report: fixed panel in the top-right corner, under the top bar.
-	_battle.anchor_left = 1.0
-	_battle.anchor_right = 1.0
-	_battle.anchor_top = 0.0
-	_battle.anchor_bottom = 0.0
-	_battle.offset_left = -392.0
-	_battle.offset_right = -12.0
-	_battle.offset_top = 54.0
-	_battle.offset_bottom = 134.0
-	_battle.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_battle.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_battle.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	_battle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_battle.clip_text = true
+	UiStyle.apply_hud_button(_recruit_a)
+	UiStyle.apply_hud_button(_recruit_b)
+	UiStyle.apply_hud_button(_march)
+	UiStyle.apply_primary_button(_end_turn)
+	UiStyle.apply_ghost_button(_save)
+	UiStyle.apply_ghost_button(_options)
+	UiStyle.apply_ghost_button(_menu)
+
+	_battle_card.add_theme_stylebox_override("panel", UiStyle.panel_box())
+
+
+func _pill(label: Label, accent: Color) -> void:
+	label.add_theme_stylebox_override(
+		"normal", UiStyle.capsule(Color(0.07, 0.08, 0.13, 0.85), Color(accent, 0.35))
+	)
+	label.add_theme_constant_override("outline_size", 0)
 
 
 # --- Refresh -------------------------------------------------------------
@@ -119,54 +138,119 @@ func _refresh() -> void:
 	_manpower.text = "👥 %d" % game.get_manpower(PLAYER)
 
 	var key := game.faction_resource_key(PLAYER)
-	_resource.text = "✦ %d %s" % [game.get_resource(PLAYER, key), Balance.resource_name(key)]
-	_turn.text = "⏳ Turno %d · %s" % [turn_manager.turn_number, turn_manager.phase_short_name()]
+	_resource.text = "✦ %d %s" % [game.get_resource(PLAYER, key), Loc.resource_name(key)]
 
+	_turn.text = Loc.t("turn_badge", [turn_manager.turn_number, Loc.phase_short(turn_manager.phase)])
+	_style_turn_badge()
+
+	_refresh_static_text()
 	_refresh_selection()
 	_refresh_buttons()
+
+
+## Button labels and tooltips that do not depend on the selection.
+func _refresh_static_text() -> void:
+	_faction_name.text = Loc.faction_name(PLAYER)
+	_march.text = Loc.t("march")
+	_end_turn.text = Loc.t("end_turn")
+	_save.text = Loc.t("save")
+	_options.text = Loc.t("options")
+	_menu.text = Loc.t("menu")
+
+	_march.tooltip_text = Loc.t("tip_march")
+	_end_turn.tooltip_text = Loc.t("tip_end_turn")
+	_save.tooltip_text = Loc.t("tip_save")
+	_options.tooltip_text = Loc.t("tip_options")
+	_menu.tooltip_text = Loc.t("tip_menu")
+
+
+func _style_turn_badge() -> void:
+	var phase: int = turn_manager.phase
+	var color := UiStyle.GOLD
+	if phase == 1:
+		color = UiStyle.DANGER
+	elif phase == 2:
+		color = UiStyle.ACCENT
+	elif phase >= 3:
+		color = UiStyle.TEXT_DIM
+	_turn.add_theme_color_override("font_color", color)
+	_turn_badge.add_theme_stylebox_override(
+		"panel", UiStyle.capsule(Color(0.07, 0.08, 0.13, 0.85), Color(color, 0.45))
+	)
 
 
 func _refresh_selection() -> void:
 	var province := _selected_province()
 	if province == null:
-		_info.text = "Selecione uma província no mapa"
+		_accent_bar.color = UiStyle.NEUTRAL
+		_name.text = Loc.t("select_province")
+		_name.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
+		_meta.text = ""
+		_clear_stats()
 		return
 
-	var role_icon := "★" if province.is_capital else ("🏰" if province.is_city else "⚑")
-	var role_name := "Capital" if province.is_capital else ("Castelo" if province.is_city else "Corredor")
-	var line1 := "%s %s (%s) · %s" % [
-		role_icon,
-		province.display_name,
-		role_name,
-		Balance.faction_name(province.owner_faction),
+	var faction_color := UiStyle.faction_color(province.owner_faction)
+	_accent_bar.color = faction_color
+
+	var role := Loc.t("role_corridor")
+	if province.is_capital:
+		role = Loc.t("role_capital")
+	elif province.is_city:
+		role = Loc.t("role_castle")
+
+	_name.text = province.display_name
+	_name.add_theme_color_override(
+		"font_color", UiStyle.GOLD if province.is_capital else UiStyle.TEXT
+	)
+	_meta.text = "%s · %s · %s" % [
+		role,
+		Loc.territory_type(province.territory_type),
+		Loc.faction_name(province.owner_faction),
 	]
 
 	var troops := province.total_troops()
-	var line2 := ""
+	_troops.text = "⚔ " + (Loc.t("troops", [troops]) if troops > 0 else Loc.t("troops_none"))
+	_troops.add_theme_color_override("font_color", UiStyle.TEXT if troops > 0 else UiStyle.TEXT_DIM)
+
 	if troops > 0:
-		line2 = "⚔ %d Tropas (Atk %.0f / Def %.0f)" % [
-			troops, province.attack_power(), province.defense_power()
+		_attack.text = "%s %.0f" % [Loc.t("stat_attack"), province.attack_power()]
+		_defense.text = "%s %.0f" % [
+			Loc.t("stat_defense"), province.defense_power() * Balance.terrain_defense(province.terrain)
 		]
 	else:
-		line2 = "⚔ Sem tropas"
+		_attack.text = ""
+		_defense.text = ""
 
+	_income.text = ""
 	if not province.resource_type.is_empty():
-		line2 += " · +%d %s" % [
-			province.resource_per_turn, Balance.resource_name(province.resource_type)
-		]
+		_income.text = Loc.t("income", [
+			province.resource_per_turn, Loc.resource_name(province.resource_type)
+		])
 
-	_info.text = "%s\n%s" % [line1, line2]
+
+func _clear_stats() -> void:
+	_troops.text = ""
+	_attack.text = ""
+	_defense.text = ""
+	_income.text = ""
 
 
 func _refresh_buttons() -> void:
 	var player_turn: bool = turn_manager.is_player_turn()
 	_end_turn.disabled = not player_turn
-	_end_turn.text = "⏳ Turno"
 
 	var province := _selected_province()
 	var owned: bool = province != null and province.is_owned_by(PLAYER)
-	_march.disabled = not (player_turn and owned and province.total_troops() > 0)
-	_march.text = "➔ Marchar"
+	var can_march := player_turn and owned and province.total_troops() > 0
+	_march.disabled = not can_march
+	# March is the expected next step while a move is armed; otherwise ending the
+	# turn is. Only one of them wears the gold primary style at a time.
+	if march_origin_id.is_empty():
+		UiStyle.apply_hud_button(_march)
+		UiStyle.apply_primary_button(_end_turn)
+	else:
+		UiStyle.apply_primary_button(_march)
+		UiStyle.apply_hud_button(_end_turn)
 
 	var is_city_province := province != null and province.is_city
 	var can_recruit_base := player_turn and owned and is_city_province
@@ -180,20 +264,51 @@ func _refresh_buttons() -> void:
 			continue
 		button.visible = true
 
-		var unit := UnitCatalog.get_unit(unit_ids[index])
+		var unit_id := unit_ids[index]
+		var unit := UnitCatalog.get_unit(unit_id)
 		var costs := unit.costs_for(PLAYER)
 		var gold_cost := int(costs["gold"])
 		var manpower_cost := int(costs["manpower"])
 
-		if not owned:
-			button.text = "%s" % unit.display_name
+		button.tooltip_text = Loc.t("recruit_tooltip", [
+			Loc.unit_name(unit_id), int(unit.attack), int(unit.defense), int(unit.upkeep),
+		])
+
+		if province == null:
+			button.text = "+ %s" % Loc.unit_name(unit_id)
+			button.disabled = true
+		elif not owned:
+			button.text = "+ %s" % Loc.unit_name(unit_id)
 			button.disabled = true
 		elif not is_city_province:
-			button.text = "Sem Recrutamento"
+			# Corridors cannot recruit; show the unit but explain why it is off.
+			button.text = "+ %s" % Loc.unit_name(unit_id)
 			button.disabled = true
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text, Loc.t("recruit_city_only"),
+			]
 		else:
-			button.text = "+ %s (%d🪙 %d👥)" % [unit.display_name, gold_cost, manpower_cost]
-			button.disabled = not (can_recruit_base and game.can_afford(PLAYER, gold_cost, manpower_cost))
+			button.text = Loc.t("recruit", [
+				Loc.unit_name(unit_id), gold_cost, manpower_cost,
+			])
+			var affordable := game.can_afford(PLAYER, gold_cost, manpower_cost)
+			button.disabled = not (can_recruit_base and affordable)
+			if not affordable:
+				button.tooltip_text = "%s\n%s" % [
+					button.tooltip_text, Loc.t("recruit_reason_gold"),
+				]
+
+
+func _retranslate() -> void:
+	# The language lives in Settings; re-render everything that carries text.
+	if game == null:
+		return
+	_faction_name.text = Loc.faction_name(PLAYER)
+	_refresh()
+	# Re-render a battle card only while it is still on screen; a language
+	# change must not resurrect one that already timed out.
+	if _battle_card.visible and not _last_battle.is_empty():
+		_show_battle(_last_battle, false)
 
 
 # --- Player actions ------------------------------------------------------
@@ -207,34 +322,56 @@ func _on_recruit(index: int) -> void:
 		return
 
 	var result := game.recruit(PLAYER, selected_province_id, unit_ids[index], 1)
-	_hint.text = "" if result.get("ok", false) else String(result.get("reason", "cannot recruit"))
+	_hint.text = "" if result.get("ok", false) else Loc.reason(String(result.get("reason", "")))
 	_refresh()
 
 
 func _on_march_pressed() -> void:
 	if not turn_manager.is_player_turn():
+		_hint.text = Loc.t("hint_bot_turn")
 		return
+
+	if not march_origin_id.is_empty():
+		_cancel_march()
+		return
+
 	var province := _selected_province()
-	if province == null or not province.is_owned_by(PLAYER) or province.total_troops() <= 0:
+	if province == null or not province.is_owned_by(PLAYER):
+		return
+	if province.total_troops() <= 0:
+		_hint.text = Loc.t("hint_no_troops")
 		return
 
 	march_origin_id = selected_province_id
-	_hint.text = "March: click an adjacent province to move or attack."
-	_refresh()
+	_hint.text = Loc.t("hint_march")
+	if map_view != null:
+		map_view.set_march_targets(PackedStringArray(province.neighbors))
+	_refresh_buttons()
 
 
 func _on_end_turn_pressed() -> void:
 	if not turn_manager.is_player_turn():
 		return
-	march_origin_id = ""
+	_cancel_march()
 	_hint.text = ""
-	_battle.text = ""
+	_battle_card.visible = false
+	_battle_token += 1
 	turn_manager.end_player_turn()
 
 
 func _on_save_pressed() -> void:
 	var saved := SaveSystem.save_game(game, turn_manager.turn_number)
-	_hint.text = "Game saved." if saved else "Saving failed."
+	_hint.text = Loc.t("saved") if saved else Loc.t("save_failed")
+
+
+func _open_settings() -> void:
+	_cancel_march()
+	_hint.text = ""
+	_settings_panel.open()
+
+
+func _on_settings_closed() -> void:
+	_refresh()
 
 
 func _on_menu_pressed() -> void:
@@ -243,6 +380,8 @@ func _on_menu_pressed() -> void:
 
 
 func _on_map_clicked(province_id: String) -> void:
+	if _settings_panel.visible:
+		return
 	if not march_origin_id.is_empty():
 		_handle_march_click(province_id)
 	else:
@@ -254,22 +393,21 @@ func _handle_march_click(target_id: String) -> void:
 	var map := game.map_state
 
 	if not turn_manager.is_player_turn():
-		march_origin_id = ""
-		_hint.text = ""
+		_cancel_march()
 		return
 
 	if not map.are_adjacent(origin_id, target_id):
-		march_origin_id = ""
-		_hint.text = ""
+		_cancel_march()
+		_hint.text = Loc.t("hint_not_neighbor")
 		_select(target_id)
 		return
 
 	var origin := map.get_province(origin_id)
 	var result := game.move(PLAYER, origin_id, target_id, origin.garrison.duplicate())
-	march_origin_id = ""
+	_cancel_march()
 
 	if not bool(result.get("ok", false)):
-		_hint.text = String(result.get("reason", "move failed"))
+		_hint.text = Loc.reason(String(result.get("reason", "")))
 		_refresh()
 		return
 
@@ -279,6 +417,15 @@ func _handle_march_click(target_id: String) -> void:
 		_select(target_id)
 	else:
 		_select(origin_id)
+
+
+func _cancel_march() -> void:
+	march_origin_id = ""
+	if map_view != null:
+		map_view.set_march_targets(PackedStringArray())
+	if _march != null:
+		UiStyle.apply_hud_button(_march)
+	_refresh_buttons()
 
 
 func _select(province_id: String) -> void:
@@ -294,40 +441,111 @@ func _selected_province() -> ProvinceData:
 	return game.map_state.get_province(selected_province_id)
 
 
+# --- Keyboard ------------------------------------------------------------
+
+## Shortcuts are read here instead of on the buttons: HUD buttons have
+## focus_mode NONE, so a focused button can never swallow Space.
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event is not InputEventKey or not event.pressed or event.echo:
+		return
+	if _settings_panel != null and _settings_panel.visible:
+		return
+
+	var key := (event as InputEventKey).keycode
+	match key:
+		KEY_SPACE:
+			_on_end_turn_pressed()
+		KEY_M:
+			_on_march_pressed()
+		KEY_ESCAPE:
+			if not march_origin_id.is_empty():
+				_cancel_march()
+				_hint.text = ""
+		KEY_S:
+			_on_save_pressed()
+		KEY_R:
+			_on_recruit(0)
+		_:
+			return
+	get_viewport().set_input_as_handled()
+
+
 # --- Signals -------------------------------------------------------------
 
 func _on_phase_changed(_phase: int) -> void:
+	if turn_manager.is_player_turn():
+		# Clear the wait message when control comes back; leave other feedback
+		# (save result, recruit errors) alone.
+		if _hint.text == Loc.t("hint_bot_turn"):
+			_hint.text = ""
+	else:
+		_cancel_march()
+		# Only the bot's own turn needs the message; resolution blinks past.
+		if turn_manager.phase == 1:
+			_hint.text = Loc.t("hint_bot_turn")
 	_refresh()
 
 
 func _on_battle_resolved(result: Dictionary) -> void:
-	var attacker := Balance.faction_name(int(result.get("attacker_faction", 0)))
-	var defender := Balance.faction_name(int(result.get("defender_faction", 1)))
-	var prov_id := String(result.get("province_id", ""))
-	var prov := game.map_state.get_province(prov_id) if (game != null and game.map_state != null) else null
-	var battle_type := "Castle Siege of %s" % String(result.get("province_name", "?"))
-	if prov != null and not prov.is_city:
-		battle_type = "Open Field Battle at %s" % prov.display_name
+	_last_battle = result
+	_show_battle(result, true)
 
-	_battle.text = "%s\n%s attacked %s — power %.0f vs %.0f\nLosses: %d attacker, %d defender · %s" % [
-		battle_type,
-		attacker,
-		defender,
-		float(result.get("attacker_power", 0.0)),
-		float(result.get("defender_power", 0.0)),
-		int(result.get("attacker_losses", 0)),
-		int(result.get("defender_losses", 0)),
-		"territory captured" if bool(result.get("captured", false)) else "territory held",
+
+func _show_battle(result: Dictionary, reset_timer: bool) -> void:
+	var prov_id := String(result.get("province_id", ""))
+	var province := game.map_state.get_province(prov_id) if (game != null and game.map_state != null) else null
+	var title_template := "battle_field"
+	if province != null and province.is_city:
+		title_template = "battle_siege"
+
+	_battle_title.text = Loc.t(title_template, [String(result.get("province_name", "?"))])
+	_battle_body.text = "%s\n%s · %s" % [
+		Loc.t("battle_line", [
+			Loc.faction_name(int(result.get("attacker_faction", 0))),
+			Loc.faction_name(int(result.get("defender_faction", 1))),
+			float(result.get("attacker_power", 0.0)),
+			float(result.get("defender_power", 0.0)),
+		]),
+		Loc.t("battle_losses", [
+			int(result.get("attacker_losses", 0)), int(result.get("defender_losses", 0)),
+		]),
+		Loc.t("battle_captured") if bool(result.get("captured", false)) else Loc.t("battle_held"),
 	]
-	_refresh()
+
+	_battle_card.visible = true
+	_battle_card.modulate.a = 1.0
+	if not reset_timer:
+		return
+
+	# Only the newest battle may hide the card; an older timer is cancelled by
+	# comparing the token it captured.
+	_battle_token += 1
+	var token := _battle_token
+	var tween := create_tween()
+	tween.tween_interval(BATTLE_VISIBLE_SECONDS)
+	tween.tween_property(_battle_card, "modulate:a", 0.0, 0.6)
+	tween.tween_callback(
+		func() -> void:
+			if token == _battle_token:
+				_battle_card.visible = false
+	)
 
 
 func _on_game_finished(winner: int) -> void:
-	march_origin_id = ""
+	_cancel_march()
 	_hint.text = ""
+	_game_over_winner = winner
+	_build_game_over()
+
+
+func _build_game_over() -> void:
+	var existing := get_node_or_null("GameOver")
+	if existing != null:
+		existing.queue_free()
 
 	var overlay := ColorRect.new()
-	overlay.color = Color(0.02, 0.02, 0.04, 0.78)
+	overlay.name = "GameOver"
+	overlay.color = Color(0.02, 0.02, 0.04, 0.80)
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(overlay)
@@ -337,28 +555,31 @@ func _on_game_finished(winner: int) -> void:
 	overlay.add_child(center)
 
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 16)
+	box.add_theme_constant_override("separation", 18)
 	center.add_child(box)
 
-	var won := winner == PLAYER
+	var won := _game_over_winner == PLAYER
 	var title := Label.new()
-	title.text = "Victory" if won else "Defeat"
+	title.text = Loc.t("victory") if won else Loc.t("defeat")
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 46)
-	title.add_theme_color_override("font_color", Color(0.98, 0.87, 0.45) if won else Color(0.85, 0.35, 0.35))
+	title.add_theme_color_override("font_color", UiStyle.GOLD if won else UiStyle.DANGER)
 	box.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "%s control Stellarium." % Balance.faction_name(winner)
+	subtitle.text = Loc.t("victory_body", [Loc.faction_name(_game_over_winner)])
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_font_size_override("font_size", 18)
+	subtitle.add_theme_color_override("font_color", UiStyle.TEXT)
 	box.add_child(subtitle)
 
 	var button := Button.new()
-	button.text = "New Game"
-	button.custom_minimum_size = Vector2(190, 42)
+	button.text = Loc.t("new_game")
+	button.custom_minimum_size = Vector2(200, 44)
 	button.pressed.connect(_on_new_game_pressed)
 	box.add_child(button)
+	UiStyle.apply_menu_button(button)
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 
 func _on_new_game_pressed() -> void:

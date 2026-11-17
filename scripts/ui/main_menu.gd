@@ -1,31 +1,33 @@
 extends Control
-## Main menu: new game, continue from save, quit.
+## Main menu: new game, continue from save, settings, quit.
 ##
 ## The map scene is the only gameplay scene; this menu starts a game (or
 ## restores one) and then switches to it. Nodes are looked up by unique name
 ## (%Name) so the layout can change without touching this script.
-
-const ACCENT := Color(0.55, 0.62, 1.0)
-const TEXT_NORMAL := Color(0.86, 0.88, 0.95)
-const TEXT_DISABLED := Color(0.42, 0.44, 0.52)
+##
+## Text comes from Loc and the Settings autoload, so switching the language in
+## the settings panel retranslates this screen in place.
 
 var game: GameState
 var turn_manager: Node
 
 @onready var _new_game: Button = %NewGame
 @onready var _continue: Button = %Continue
+@onready var _settings_button: Button = %SettingsButton
 @onready var _quit: Button = %Quit
 @onready var _status: Label = %Status
 @onready var _menu_column: Control = %MenuMargin
 @onready var _black_hole: Control = %BlackHole
+@onready var _settings_panel: SettingsPanel = %SettingsPanel
+@onready var _settings: GameSettings = get_node("/root/Settings")
 
 
 func _ready() -> void:
 	# A Control scene root does not size itself to the window; do it explicitly.
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	for button: Button in [_new_game, _continue, _quit]:
-		_style_button(button)
+	for button: Button in [_new_game, _continue, _settings_button, _quit]:
+		UiStyle.apply_menu_button(button)
 	_play_intro()
 
 	game = get_node_or_null("/root/Game") as GameState
@@ -36,10 +38,33 @@ func _ready() -> void:
 
 	_new_game.pressed.connect(_on_new_game)
 	_continue.pressed.connect(_on_continue)
+	_settings_button.pressed.connect(_open_settings)
 	_quit.pressed.connect(_on_quit)
+	_settings_panel.closed.connect(_on_settings_closed)
+	_settings.changed.connect(_retranslate)
 
 	_continue.disabled = not SaveSystem.has_save()
-	_status.text = "A saved campaign is available." if SaveSystem.has_save() else ""
+	_retranslate()
+	_new_game.grab_focus()
+
+
+func _retranslate() -> void:
+	_new_game.text = Loc.t("new_game")
+	_continue.text = Loc.t("continue")
+	_settings_button.text = Loc.t("settings")
+	_quit.text = Loc.t("quit")
+	_update_status()
+
+
+func _update_status() -> void:
+	_status.text = Loc.t("saved_available") if SaveSystem.has_save() else ""
+
+
+func _open_settings() -> void:
+	_settings_panel.open()
+
+
+func _on_settings_closed() -> void:
 	_new_game.grab_focus()
 
 
@@ -51,7 +76,7 @@ func _on_new_game() -> void:
 func _on_continue() -> void:
 	var result := SaveSystem.load_game(game)
 	if not bool(result.get("ok", false)):
-		_status.text = "Could not load save: %s" % String(result.get("reason", "unknown"))
+		_status.text = Loc.t("load_failed", [String(result.get("reason", "unknown"))])
 		_continue.disabled = true
 		return
 
@@ -61,38 +86,6 @@ func _on_continue() -> void:
 
 func _on_quit() -> void:
 	get_tree().quit()
-
-
-# --- Look and feel -------------------------------------------------------
-
-## Flat, left-aligned buttons with an accent bar on hover/focus.
-func _style_button(button: Button) -> void:
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.focus_mode = Control.FOCUS_ALL
-	button.add_theme_color_override("font_color", TEXT_NORMAL)
-	button.add_theme_color_override("font_hover_color", Color.WHITE)
-	button.add_theme_color_override("font_focus_color", Color.WHITE)
-	button.add_theme_color_override("font_pressed_color", Color.WHITE)
-	button.add_theme_color_override("font_disabled_color", TEXT_DISABLED)
-
-	button.add_theme_stylebox_override("normal", _box(Color(0.08, 0.09, 0.16, 0.55), Color(0.3, 0.33, 0.5, 0.6)))
-	button.add_theme_stylebox_override("hover", _box(Color(0.16, 0.18, 0.36, 0.8), ACCENT))
-	button.add_theme_stylebox_override("focus", _box(Color(0.16, 0.18, 0.36, 0.8), ACCENT))
-	button.add_theme_stylebox_override("pressed", _box(Color(0.22, 0.25, 0.5, 0.9), Color.WHITE))
-	button.add_theme_stylebox_override("disabled", _box(Color(0.06, 0.07, 0.11, 0.4), Color(0.2, 0.21, 0.28, 0.5)))
-
-
-func _box(fill: Color, bar: Color) -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = fill
-	box.border_color = bar
-	box.border_width_left = 4
-	box.set_corner_radius_all(2)
-	box.content_margin_left = 22.0
-	box.content_margin_right = 16.0
-	box.content_margin_top = 10.0
-	box.content_margin_bottom = 10.0
-	return box
 
 
 ## Black hole fades in first, then the menu column fades in just after it.

@@ -15,6 +15,8 @@ const COLOR_BORDER := Color(0.06, 0.08, 0.12, 0.95)
 const COLOR_BORDER_SELECTED := Color(1.0, 0.86, 0.30, 1.0)
 const COLOR_BORDER_HOVER := Color(0.95, 0.98, 1.0, 1.0)
 const COLOR_BORDER_NEUTRAL := Color(0.10, 0.08, 0.06, 0.60)
+## Reachable neighbours while a march is armed (also drawn as routes).
+const COLOR_BORDER_MARCH := Color(1.0, 0.72, 0.22, 0.95)
 
 @onready var _fill: Polygon2D = $Fill
 @onready var _border: Line2D = $Border
@@ -25,6 +27,7 @@ const COLOR_BORDER_NEUTRAL := Color(0.10, 0.08, 0.06, 0.60)
 var data: ProvinceData
 var _selected := false
 var _hovered := false
+var _march_target := false
 var _connected_draw := false
 
 
@@ -112,6 +115,12 @@ func set_hovered(value: bool) -> void:
 		_visuals.queue_redraw()
 
 
+## Highlight used while the player is choosing a march destination.
+func set_march_target(value: bool) -> void:
+	_march_target = value
+	_apply_border()
+
+
 func _apply_border() -> void:
 	var owned := data != null and not data.is_neutral()
 	if _selected:
@@ -120,6 +129,10 @@ func _apply_border() -> void:
 		z_index = 2
 	elif _hovered:
 		_border.default_color = COLOR_BORDER_HOVER
+		_border.width = 2.8
+		z_index = 1
+	elif _march_target:
+		_border.default_color = COLOR_BORDER_MARCH
 		_border.width = 2.8
 		z_index = 1
 	else:

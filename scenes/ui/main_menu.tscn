@@ -1,9 +1,10 @@
-[gd_scene format=3 uid="uid://diqvyj2jhixt8"]
+[gd_scene load_steps=6 format=3 uid="uid://diqvyj2jhixt8"]
 
 [ext_resource type="Script" uid="uid://c58ssjek2wtk5" path="res://scripts/ui/main_menu.gd" id="1_menu"]
 [ext_resource type="Script" path="res://scripts/ui/starfield.gd" id="2_stars"]
 [ext_resource type="Script" path="res://scripts/ui/black_hole.gd" id="3_hole"]
 [ext_resource type="Script" path="res://scripts/ui/constellation_title.gd" id="4_title"]
+[ext_resource type="PackedScene" uid="uid://c0g4k7settings01" path="res://scenes/ui/settings_panel.tscn" id="5_settings"]
 
 [sub_resource type="Gradient" id="Gradient_shade"]
 offsets = PackedFloat32Array(0, 0.55, 1)
@@ -101,7 +102,7 @@ layout_mode = 1
 anchors_preset = -1
 anchor_right = 0.55
 anchor_bottom = 1.0
-grow_horizontal = 2
+grow_horizontal = 1
 grow_vertical = 2
 mouse_filter = 2
 theme_override_constants/margin_left = 96
@@ -142,6 +143,14 @@ size_flags_horizontal = 0
 theme_override_font_sizes/font_size = 18
 text = "Continue"
 
+[node name="SettingsButton" type="Button" parent="MenuMargin/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 52)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_font_sizes/font_size = 18
+text = "Definições"
+
 [node name="Quit" type="Button" parent="MenuMargin/Column"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(320, 52)
@@ -170,3 +179,8 @@ mouse_filter = 2
 theme_override_colors/font_color = Color(0.4, 0.42, 0.52, 1)
 theme_override_font_sizes/font_size = 12
 text = "PAP TGPSI · ETPC · Prototype"
+
+[node name="SettingsPanel" parent="." instance=ExtResource("5_settings")]
+unique_name_in_owner = true
+layout_mode = 1
+

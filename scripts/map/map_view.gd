@@ -19,6 +19,8 @@ const ROAD_WIDTH := 2.0
 
 var state: MapState
 var selected_province_id: String = ""
+## Provinces the player may march into while a move is armed.
+var _march_targets: PackedStringArray = PackedStringArray()
 
 var game: GameState
 var turn_manager: Node
@@ -99,6 +101,16 @@ func get_view(province_id: String) -> ProvinceView:
 	return view
 
 
+## Gold borders on the provinces the armed army can reach. Passing an empty
+## list clears the highlight; the HUD calls this when march mode starts/ends.
+func set_march_targets(province_ids: PackedStringArray) -> void:
+	_march_targets = province_ids.duplicate()
+	for view_id: String in _views.keys():
+		var view: ProvinceView = _views[view_id]
+		view.set_march_target(_march_targets.has(view_id))
+	_overlay.queue_redraw()
+
+
 func refresh_all() -> void:
 	for view_id: String in _views.keys():
 		var view: ProvinceView = _views[view_id]
@@ -139,6 +151,8 @@ func _build_views() -> void:
 		var view: ProvinceView = PROVINCE_SCENE.instantiate()
 		add_child(view)
 		view.setup(province)
+		# Keep an armed march visible across a state rebuild.
+		view.set_march_target(_march_targets.has(province.id))
 		_views[province.id] = view
 
 

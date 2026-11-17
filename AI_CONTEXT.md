@@ -8,6 +8,8 @@ conventions the project depends on, and the traps already hit once.
 Playable MVP: main menu, procedurally generated 21-province continent, turn
 cycle, recruitment, movement, numeric combat, behaviour-tree bot, HUD with
 battle summary, victory/defeat screen, JSON save/load with auto-save each turn.
+The whole UI is localized in Portuguese and English, switchable in-game from a
+settings panel (language + fullscreen) and persisted between runs.
 
 Engine: **Godot 4.7.2-stable** (the brief said 4.6.1; the project was created
 with 4.7 features and runs on the installed editor). GDScript only.
@@ -31,10 +33,11 @@ also advance. That is a deliberate change from the first rule-based version
 ## Layout
 
 ```
-scenes/ui/main_menu.tscn      main scene; New Game / Continue / Quit
+scenes/ui/main_menu.tscn      main scene; New Game / Continue / Settings / Quit
 scenes/map/map.tscn           gameplay scene: MapView + Bot + HUD instance
 scenes/map/province.tscn      Node2D per province, built at runtime from ProvinceData
-scenes/ui/hud.tscn            top bar + bottom action bar
+scenes/ui/hud.tscn            top resource bar + bottom selection/action dock
+scenes/ui/settings_panel.tscn reusable overlay: language + fullscreen
 shaders/terrain.gdshader      terrain painter: relief, biomes, sea, snow
 scripts/data/balance.gd       every tuning number
 scripts/data/province_data.gd ProvinceData Resource (owner, garrison, terrain)
@@ -45,12 +48,16 @@ scripts/data/unit_type.gd     unit stats Resource
 scripts/data/unit_catalog.gd  builds UnitType cache from Balance.UNIT_DEFS
 scripts/core/game_state.gd    autoload "Game": stockpiles, income, actions
 scripts/core/turn_manager.gd  autoload "TurnManager": phases + signals
+scripts/core/settings.gd      autoload "Settings": language + fullscreen (user://settings.cfg)
+scripts/core/loc.gd           every PT/EN string and display-time helpers
 scripts/core/combat_resolver.gd  pure numeric combat
 scripts/core/save_system.gd   JSON save/load, versioning, atomic write
 scripts/ai/bot_controller.gd  BT-driven bot (also used for headless sims)
 scripts/ai/tasks/bt_*.gd      tree leaves: recruit, attack, advance
 scripts/ui/hud.gd             player controller: selection, march, recruit
 scripts/ui/main_menu.gd       menu actions
+scripts/ui/settings_panel.gd  settings overlay logic (shared by menu + HUD)
+scripts/ui/ui_style.gd        shared palette and button styleboxes
 scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
 ```
 
@@ -72,6 +79,16 @@ scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
   dependency.
 - `MapView` renders and hit-tests; it does not mutate game state. `GameHUD`
   turns clicks into `Game` actions.
+- Data values stay English (`territory_type` = "River Town", unit ids, save
+  fields). Translation happens only at display time through `Loc`
+  (`Loc.territory_type`, `Loc.unit_name`, `Loc.t`). Never translate a value
+  before storing or comparing it.
+- `Settings` is the only writer of `user://settings.cfg` and the only place
+  that changes `Loc.language`. It emits `changed`; open screens rebuild their
+  text in place instead of reloading the scene.
+- `UiStyle` owns the palette and the styleboxes shared by the menu, the HUD and
+  the settings panel. New screens take their look from it rather than building
+  their own `StyleBoxFlat`s.
 - Custom Resources never hold node references (only ids/values), per project
   rules.
 
@@ -195,7 +212,24 @@ Do not tune by cost multipliers alone; measure 20+ runs.
   script can use them as a type.
 - Autoloads are resolved with `get_node_or_null("/root/Game")` instead of the
   bare global name. The editor's autoload cache can be stale after
-  `autoload_manage` writes `project.godot`; tree lookup always works.
+  `autoload_manage` writes `project.godot`; tree lookup always works. The
+  settings autoload is typed at the call site: `var _settings: GameSettings =
+  get_node("/root/Settings")` (its script has `class_name GameSettings` because
+  a class name may not equal the autoload name).
+- All player-facing text goes through `Loc`; a new string needs a key in **both**
+  tables (`pt` and `en`) or `Loc.t` warns and returns the raw key. Literal keys
+  used in scripts are checked by `Loc.STRINGS`; dynamic `battle_*` keys are
+  literals too, so keep them quoted.
+- HUD buttons use `focus_mode = NONE` and shortcuts live in
+  `GameHUD._unhandled_key_input` (Space end turn, M march, Esc cancel, S save,
+  R recruit). Never rely on a focused button for a shortcut: a focused button
+  would swallow Space.
+- Hand-written UIDs (`uid://mycustomid`) are rejected: Godot warns and falls
+  back to the text path. Use the UID from the generated `.uid` sidecar.
+- A full-rect, left-anchored `MenuMargin` whose child's minimum width exceeds
+  its anchor rectangle grows in both directions when `grow_horizontal = 2`,
+  pushing the menu off-screen. Keep `grow_horizontal = 1` (END) on the menu
+  container.
 - `BehaviorTree.instantiate(agent, blackboard, owner, scene_root)` rejects a
   null blackboard **and** a null scene root. Pass `Blackboard.new()` and
   `get_tree().current_scene`; a bot instanced at runtime has no scene owner,
@@ -224,7 +258,9 @@ Do not tune by cost multipliers alone; measure 20+ runs.
 - Controls added by `build_layout` lose their offsets when an anchor preset is
   applied afterwards: set offsets again on the source scene.
 - Scene-root `Control` nodes are not viewport-sized; call
-  `set_anchors_and_offsets_preset(PRESET_FULL_RECT)` in `_ready()`.
+  `set_anchors_and_offsets_preset(PRESET_FULL_RECT)` in `_ready()`. A `Control`
+  whose parent is a `CanvasLayer` is sized against the viewport, so the same
+  call is what makes the settings dim layer cover the screen.
 - `ColorRect` and containers default to `MOUSE_FILTER_STOP`; set 2 (IGNORE) on
   backgrounds or map clicks never reach the map.
 - LimboAI icons must be imported: if the editor was open when the addon was
@@ -245,3 +281,6 @@ governments/laws, End of the World events, Rats faction.
    code, once the shape is stable.
 4. Optional: the main menu still draws a visibly pixelated planet — replace it
    with a downscaled render of the generated field, or hide the planet.
+5. Optional: gamepad navigation for the HUD. Buttons are `focus_mode = NONE`
+   today so keyboard shortcuts never steal focus; a controller pass needs focus
+   neighbours and a way to keep Space/M working while a button has focus.
