@@ -18,6 +18,10 @@ var manpower: Dictionary = {}
 var faction_resources: Dictionary = {}
 var last_battle: Dictionary = {}
 
+## faction -> turns of capital-loss penalty still to serve. Empty/0 means no
+## penalty. Kept in the model so the HUD, bot and save all read one value.
+var capital_penalty: Dictionary = {}
+
 ## faction -> Array of order dictionaries. Orders are data, never actions.
 var queued_orders: Dictionary = {}
 
@@ -42,6 +46,7 @@ func start_new_game(map_seed: int = -1) -> void:
 	faction_resources.clear()
 	last_battle.clear()
 	queued_orders.clear()
+	capital_penalty.clear()
 
 	for faction: int in factions():
 		gold[faction] = Balance.STARTING_GOLD
@@ -78,6 +83,29 @@ func faction_resource_key(faction: int) -> String:
 
 # --- Economy -------------------------------------------------------------
 
+## Turns of capital-loss penalty left for this faction, or 0.
+func capital_penalty_turns(faction: int) -> int:
+	if not Balance.CAPITAL_PENALTY_ENABLED:
+		return 0
+	return maxi(int(capital_penalty.get(faction, 0)), 0)
+
+
+## Recruitment price for one unit right now, including the capital penalty.
+## The HUD, the bot and queue_recruit() all read this so they never disagree.
+func recruit_costs(faction: int, unit_id: String) -> Dictionary:
+	var unit := UnitCatalog.get_unit(unit_id)
+	if unit == null:
+		return {"gold": 0, "manpower": 0}
+	var costs := unit.costs_for(faction)
+	var multiplier := 1.0
+	if capital_penalty_turns(faction) > 0:
+		multiplier += Balance.CAPITAL_RECRUIT_COST_PENALTY
+	return {
+		"gold": int(ceil(float(costs["gold"]) * multiplier)),
+		"manpower": int(ceil(float(costs["manpower"]) * multiplier)),
+	}
+
+
 ## What this faction would gain at the next resolution step.
 func income_for(faction: int) -> Dictionary:
 	var gold_income := 0
@@ -87,6 +115,8 @@ func income_for(faction: int) -> Dictionary:
 
 	if map_state != null:
 		for province in map_state.provinces_owned_by(faction):
+			if province.unrest_turns > 0:
+				continue
 			gold_income += Balance.PROVINCE_GOLD_INCOME
 			manpower_income += Balance.PROVINCE_MANPOWER_INCOME
 			if province.is_capital:
@@ -97,6 +127,12 @@ func income_for(faction: int) -> Dictionary:
 
 	gold_income = int(round(gold_income * Balance.modifier(faction, "gold", 1.0)))
 	manpower_income = int(round(manpower_income * Balance.modifier(faction, "manpower", 1.0)))
+
+	# A lost capital taxes the whole realm for a few turns.
+	if capital_penalty_turns(faction) > 0:
+		var keep := 1.0 - Balance.CAPITAL_INCOME_PENALTY
+		gold_income = int(round(float(gold_income) * keep))
+		manpower_income = int(round(float(manpower_income) * keep))
 
 	var resources := {}
 	if not resource_key.is_empty():
@@ -163,6 +199,76 @@ func apply_upkeep(faction: int) -> int:
 	return paid
 
 
+## End-of-turn bookkeeping that is neither income nor upkeep. Capital penalties
+## and conquest unrest are advanced here too.
+func advance_turn_state() -> void:
+	regen_home_guards()
+	decay_capital_penalties()
+	decay_conquest_unrest()
+
+
+## Every owned province raises HOME_GUARD_REGEN militia up to its cap. The levy
+## costs no upkeep and is not part of the mobile garrison.
+func regen_home_guards() -> void:
+	if map_state == null:
+		return
+	for province in map_state.provinces:
+		if not Balance.HOME_GUARD_ENABLED or province.is_neutral():
+			province.home_guard = 0
+			continue
+		province.home_guard = mini(
+			province.home_guard + Balance.HOME_GUARD_REGEN,
+			province.home_guard_cap(),
+		)
+
+
+## Starts the temporary penalty for a faction whose capital changed hands.
+## Called once per resolution, after the final owners are written.
+func _apply_capital_losses(snapshot: Dictionary) -> void:
+	if not Balance.CAPITAL_PENALTY_ENABLED:
+		return
+	for province in map_state.provinces:
+		if not province.is_capital:
+			continue
+		var before := int(snapshot[province.id]["owner"])
+		if before == Balance.Faction.NEUTRAL or before == province.owner_faction:
+			continue
+		capital_penalty[before] = Balance.CAPITAL_PENALTY_TURNS
+		_log("[capital] %s loses %s; income and recruitment penalised for %d turns" % [
+			Balance.faction_name(before), province.display_name, Balance.CAPITAL_PENALTY_TURNS,
+		])
+
+
+## Counts a penalty turn down at the end of each resolution.
+func decay_capital_penalties() -> void:
+	for faction: int in capital_penalty.keys():
+		var left := int(capital_penalty[faction]) - 1
+		capital_penalty[faction] = maxi(left, 0)
+
+
+## Marks every province that changed hands this resolution as unsettled, so it
+## pays no income and cannot recruit until it is pacified.
+func _apply_conquest_unrest(snapshot: Dictionary) -> void:
+	if not Balance.CONQUEST_UNREST_ENABLED:
+		return
+	for province in map_state.provinces:
+		if int(snapshot[province.id]["owner"]) == province.owner_faction:
+			continue
+		province.unrest_turns = Balance.CONQUEST_UNREST_TURNS
+
+
+## Counts unrest down after the income step, so a province captured this turn
+## already misses its income before the counter drops.
+func decay_conquest_unrest() -> void:
+	if map_state == null:
+		return
+	for province in map_state.provinces:
+		if province.is_neutral():
+			province.unrest_turns = 0
+			continue
+		province.unrest_turns = maxi(province.unrest_turns - 1, 0)
+
+
 func can_afford(faction: int, gold_cost: int, manpower_cost: int) -> bool:
 	return get_gold(faction) >= gold_cost and get_manpower(faction) >= manpower_cost
 
@@ -216,7 +322,7 @@ func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary)
 		if int(committed.get(unit_id, 0)) + int(moving[unit_id]) > int(origin.garrison.get(unit_id, 0)):
 			return _fail("not enough %s in %s" % [unit_id, origin.display_name])
 
-	var hostile := not target.is_owned_by(faction) and target.total_troops() > 0
+	var hostile := not target.is_owned_by(faction) and target.defence_troops() > 0
 	if hostile and _queued_attack_count(faction, from_id) >= 1:
 		return _fail("%s has already issued an attack order this turn" % origin.display_name)
 
@@ -254,6 +360,8 @@ func queue_recruit(faction: int, province_id: String, unit_id: String, count: in
 		return _fail("unknown province")
 	if not province.is_owned_by(faction):
 		return _fail("%s is not yours" % province.display_name)
+	if province.unrest_turns > 0:
+		return _fail("%s is in unrest for %d more turns" % [province.display_name, province.unrest_turns])
 	if not province.is_city:
 		return _fail("%s is an open corridor — recruitment is only allowed in cities and castles" % province.display_name)
 
@@ -265,7 +373,7 @@ func queue_recruit(faction: int, province_id: String, unit_id: String, count: in
 	if count <= 0:
 		return _fail("recruit count must be positive")
 
-	var costs := unit.costs_for(faction)
+	var costs := recruit_costs(faction, unit_id)
 	var total_gold := int(costs["gold"]) * count
 	var total_manpower := int(costs["manpower"]) * count
 	if not can_afford(faction, total_gold, total_manpower):
@@ -310,12 +418,10 @@ func cancel_order(faction: int, index: int) -> Dictionary:
 
 	var order: Dictionary = queue[index]
 	if String(order.get("type", "")) == "recruit":
-		var count := int(order.get("count", 0))
-		var unit := UnitCatalog.get_unit(String(order.get("unit_id", "")))
-		if unit != null and count > 0:
-			var costs := unit.costs_for(faction)
-			gold[faction] = get_gold(faction) + int(costs["gold"]) * count
-			manpower[faction] = get_manpower(faction) + int(costs["manpower"]) * count
+		# Refund exactly what was charged; a capital penalty or price change
+		# must never turn a cancel into a profit or a loss.
+		gold[faction] = get_gold(faction) + int(order.get("gold", 0))
+		manpower[faction] = get_manpower(faction) + int(order.get("manpower", 0))
 
 	queue.remove_at(index)
 	orders_changed.emit()
@@ -383,7 +489,7 @@ func _queued_attack_count(faction: int, from_id: String) -> int:
 		if String(order.get("from_id", "")) != from_id:
 			continue
 		var target := map_state.get_province(String(order.get("to_id", "")))
-		if target != null and not target.is_owned_by(faction) and target.total_troops() > 0:
+		if target != null and not target.is_owned_by(faction) and target.defence_troops() > 0:
 			count += 1
 	return count
 
@@ -408,12 +514,13 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash("stellarium:%d:%d" % [map_state.map_seed, turn_number])
 
-	# 1. Snapshot owners and garrisons before any order is applied.
+	# 1. Snapshot owners, garrisons and militia before any order is applied.
 	var snapshot: Dictionary = {}
 	for province in map_state.provinces:
 		snapshot[province.id] = {
 			"owner": province.owner_faction,
 			"garrison": province.garrison.duplicate(true),
+			"home_guard": province.home_guard,
 		}
 
 	# 2. Recruits appear first, so they can defend but cannot move: moves were
@@ -482,9 +589,11 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 	# armies always land after every destination is known.
 	var final_owner: Dictionary = {}
 	var final_garrison: Dictionary = {}
+	var final_home_guard: Dictionary = {}
 	for province_id: String in snapshot.keys():
 		final_owner[province_id] = int(snapshot[province_id]["owner"])
 		final_garrison[province_id] = (station[province_id] as Dictionary).duplicate(true)
+		final_home_guard[province_id] = int(snapshot[province_id]["home_guard"])
 	var pending_returns: Array = []
 
 	# 5. Swaps: A invades B's province while B invades A's. Both armies meet in
@@ -561,7 +670,7 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 	for target_id: String in targets:
 		_resolve_destination(
 			target_id, by_target[target_id], snapshot, station, rng, summary,
-			final_owner, final_garrison, pending_returns
+			final_owner, final_garrison, final_home_guard, pending_returns
 		)
 
 	# 7. Independent swap battles are also ordered by the seed, never by faction.
@@ -609,6 +718,10 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 	for province in map_state.provinces:
 		province.owner_faction = int(final_owner[province.id])
 		province.garrison = (final_garrison[province.id] as Dictionary).duplicate(true)
+		province.home_guard = int(final_home_guard.get(province.id, 0))
+
+	_apply_capital_losses(snapshot)
+	_apply_conquest_unrest(snapshot)
 
 	clear_orders()
 	state_changed.emit()
@@ -624,9 +737,11 @@ func _resolve_destination(
 	summary: Dictionary,
 	final_owner: Dictionary,
 	final_garrison: Dictionary,
+	final_home_guard: Dictionary,
 	pending_returns: Array,
 ) -> void:
 	var owner := int(snapshot[target_id]["owner"])
+	var militia := int(snapshot[target_id]["home_guard"]) if Balance.HOME_GUARD_ENABLED else 0
 	var incoming: Dictionary = {}
 	var orders_by_faction: Dictionary = {}
 	for entry_variant in incoming_moves:
@@ -639,11 +754,12 @@ func _resolve_destination(
 		orders_by_faction[faction].append(entry)
 
 	# Defence is the snapshot station plus any friendly reinforcement arriving
-	# this turn (rule 3c). Recruits were already folded into the station.
+	# this turn (rule 3c), plus the home guard that never leaves.
 	var defence: Dictionary = (station[target_id] as Dictionary).duplicate(true)
 	var friendly: Dictionary = incoming.get(owner, {}) if owner != Balance.Faction.NEUTRAL else {}
 	if not friendly.is_empty():
 		_merge_units(defence, friendly)
+	var has_defence := not defence.is_empty() or militia > 0
 
 	var attackers: Dictionary = {}
 	for faction: int in incoming.keys():
@@ -657,26 +773,26 @@ func _resolve_destination(
 		if owner == Balance.Faction.NEUTRAL:
 			if incoming.size() == 1:
 				var only_faction: int = int(incoming.keys()[0])
-				_arrival(target_id, incoming[only_faction], only_faction, summary, final_owner, final_garrison)
+				_arrival(target_id, incoming[only_faction], only_faction, summary, final_owner, final_garrison, final_home_guard)
 			elif incoming.size() > 1:
 				_resolve_contest(
 					target_id, incoming, orders_by_faction, rng, summary,
-					final_owner, final_garrison, pending_returns
+					final_owner, final_garrison, final_home_guard, pending_returns
 				)
 		else:
 			final_garrison[target_id] = defence
 		return
 
-	# Undefended (or the owner left): one attacker takes it, two fight a field
-	# battle for it.
-	if defence.is_empty():
+	# Undefended (or the owner left and no militia): one attacker takes it, two
+	# fight a field battle for it.
+	if not has_defence:
 		if attackers.size() == 1:
 			var attacker_faction: int = int(attackers.keys()[0])
-			_arrival(target_id, attackers[attacker_faction], attacker_faction, summary, final_owner, final_garrison)
+			_arrival(target_id, attackers[attacker_faction], attacker_faction, summary, final_owner, final_garrison, final_home_guard)
 		else:
 			_resolve_contest(
 				target_id, attackers, orders_by_faction, rng, summary,
-				final_owner, final_garrison, pending_returns
+				final_owner, final_garrison, final_home_guard, pending_returns
 			)
 		return
 
@@ -705,6 +821,7 @@ func _resolve_destination(
 	battle_target.terrain = target.terrain
 	battle_target.owner_faction = owner
 	battle_target.garrison = defence.duplicate(true)
+	battle_target.home_guard = militia
 	var result := CombatResolver.resolve(attack_units.duplicate(true), battle_target, attacker_faction, rng)
 	result["from_id"] = String(attacker_orders[0]["from"]) if not attacker_orders.is_empty() else ""
 	result["to_id"] = target_id
@@ -725,8 +842,11 @@ func _resolve_destination(
 	if bool(result["captured"]):
 		final_owner[target_id] = attacker_faction
 		final_garrison[target_id] = (result["attacker_survivors"] as Dictionary).duplicate(true)
+		# The levy dies with the old owner; it never transfers.
+		final_home_guard[target_id] = 0
 	else:
 		final_garrison[target_id] = battle_target.garrison.duplicate(true)
+		final_home_guard[target_id] = battle_target.home_guard
 		_pending_returns(result["attacker_survivors"], attacker_orders, attacker_faction, pending_returns, rng)
 
 
@@ -740,6 +860,7 @@ func _resolve_contest(
 	summary: Dictionary,
 	final_owner: Dictionary,
 	final_garrison: Dictionary,
+	final_home_guard: Dictionary,
 	pending_returns: Array,
 ) -> void:
 	var factions_in: Array = incoming.keys()
@@ -774,10 +895,12 @@ func _resolve_contest(
 	if winner == first:
 		final_owner[target_id] = first
 		final_garrison[target_id] = (result["survivors_a"] as Dictionary).duplicate(true)
+		final_home_guard[target_id] = 0
 		_pending_returns(result["survivors_b"], orders_by_faction.get(second, []), second, pending_returns, rng)
 	else:
 		final_owner[target_id] = second
 		final_garrison[target_id] = (result["survivors_b"] as Dictionary).duplicate(true)
+		final_home_guard[target_id] = 0
 		_pending_returns(result["survivors_a"], orders_by_faction.get(first, []), first, pending_returns, rng)
 
 
@@ -844,6 +967,7 @@ func _arrival(
 	summary: Dictionary,
 	final_owner: Dictionary,
 	final_garrison: Dictionary,
+	final_home_guard: Dictionary,
 ) -> void:
 	var owner := int(final_owner.get(province_id, Balance.Faction.NEUTRAL))
 	var garrison: Dictionary = (final_garrison.get(province_id, {}) as Dictionary).duplicate(true)
@@ -852,6 +976,8 @@ func _arrival(
 	if owner == faction:
 		return
 	final_owner[province_id] = faction
+	# A captured province loses its levy and starts raising a new one next turn.
+	final_home_guard[province_id] = 0
 	summary["captures"].append({
 		"faction": faction,
 		"province": province_id,

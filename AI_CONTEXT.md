@@ -15,6 +15,12 @@ Turns are **simultaneous**: the player queues orders, the bot queues its own
 orders without seeing them, and only then does one snapshot-based resolution
 apply both sides. Pressing March or Recruit never changes the board by itself.
 
+The rules also carry anti-snowball friction: every province raises a defensive
+militia (home guard), a captured province pays nothing until it settles, losing
+the capital is a temporary penalty rather than a loss, and the bot leaves a
+tiered garrison behind when it marches. See "Rules implemented" and "Balance
+findings" for the numbers behind each.
+
 Engine: **Godot 4.7.2-stable** (the brief said 4.6.1; the project was created
 with 4.7 features and runs on the installed editor). GDScript only.
 
@@ -47,7 +53,7 @@ scenes/ui/hud.tscn            top resource bar + bottom selection/action dock
 scenes/ui/settings_panel.tscn reusable overlay: language + fullscreen
 shaders/terrain.gdshader      terrain painter: relief, biomes, sea, snow
 scripts/data/balance.gd       every tuning number
-scripts/data/province_data.gd ProvinceData Resource (owner, garrison, terrain)
+scripts/data/province_data.gd ProvinceData Resource (owner, garrison, terrain, home guard, unrest)
 scripts/data/map_state.gd     province graph, label grid, rivers, win queries
 scripts/data/world_generator.gd  procedural continent (elevation, rivers, provinces)
 scripts/data/map_factory.gd   entry point: seed -> MapState + starting armies
@@ -118,12 +124,33 @@ scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (20 games)
   corridors are movement-only.
 - Income at resolution: 15 gold and 5 manpower per province, capital +8/+2,
   faction resource (Humans: Aether on Plains, Elves: Iron on Mountains) +2.
+- Home guard (`Balance.HOME_GUARD_*`): every owned province holds militia that
+  defends but never marches, costs no upkeep and is lost with the province. It
+  regenerates 1/turn up to 2 (4 in a capital), starts full in the initial map,
+  absorbs defender losses before the garrison, and counts in `defence_troops()`
+  so the bot treats a militia-only province as defended.
+- Conquest unrest (`Balance.CONQUEST_UNREST_*`): a province that changes hands
+  produces no income and cannot recruit for 2 resolution steps. Captures set
+  the counter in `resolve_turn()`; `advance_turn_state()` counts it down after
+  income has been applied.
+- Losing the capital (`Balance.CAPITAL_PENALTY_*`) applies +30% recruitment
+  cost and -25% gold/manpower income for 3 turns. Recruitment stays possible
+  from every owned city; nothing is disabled. The penalty is per faction, is
+  saved, and is shown in the recruit tooltip.
 - Upkeep per army: `ceil(avg_unit_cost / 15 * troops ^ 1.2)`.
 - Humans pay 0.7x recruitment; Elves get 1.15x income.
 - Orders are validated when queued, against the current board **and** the units
   already committed from the same origin. A province may send many friendly
   marches but at most one attack order per turn. Recruit gold/manpower are
-  reserved at queue time and refunded by `cancel_order()`.
+  reserved at queue time and refunded by `cancel_order()` from the amounts
+  stored on the order, so a price change never turns a cancel into a profit.
+- The player chooses how many troops march: pressing March opens a SpinBox
+  (whole garrison by default) above the bottom dock, and the count is spread
+  over the garrison in stable unit order. The bot applies the same idea through
+  `Balance.GARRISON_*`: it keeps 1 troop in an interior province, 2 on a
+  province bordering the enemy and 3 in its capital when it repositions, sends
+  garrison-minus-1 on a normal attack, and commits everything once a front has
+  stalled for `IMPATIENCE_ROUNDS`.
 - Movement only between adjacent provinces. Units are not removed while
   planning; the garrison is only read to validate later orders.
 - Resolution works from one snapshot taken before any order:
@@ -133,17 +160,18 @@ scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (20 games)
      province's only defence;
   3. destinations resolve in a seed-shuffled order — never faction order — so
      neither side has first-mover advantage.
-- Defence is the snapshot garrison plus friendly reinforcements arriving this
-  turn. An undefended province is taken without a fight; two factions arriving
-  at the same undefended province fight a field battle; two armies swapping
-  provinces also fight in the field. Field battles reuse `CombatResolver` on a
-  throwaway plains `ProvinceData`.
+- Defence is the snapshot garrison plus militia plus friendly reinforcements
+  arriving this turn. An undefended province is taken without a fight; two
+  factions arriving at the same undefended province fight a field battle; two
+  armies swapping provinces also fight in the field. Field battles reuse
+  `CombatResolver` on a throwaway plains `ProvinceData`.
 - Survivors return to their origin only if their faction still owns it after
   every capture; otherwise they are lost.
-- Combat: attacker `sum(atk*count)`, defender `sum(def*count) * terrain`
-  (Plains 1.0, Mountains 1.25), both x random 0.9-1.1.
+- Combat: attacker `sum(atk*count)`, defender `sum(def*count) + militia*4`,
+  all times terrain (Plains 1.0, Mountains 1.25), everything x random 0.9-1.1.
   `ratio = att/(att+def)`; attacker loses `ceil(att*(1-ratio)*0.7)`,
-  defender loses `ceil(def*ratio*1.0)`.
+  defender loses `ceil(def*ratio*1.0)`, militia first then the garrison.
+  Loss factors were left at 0.7/1.0: the target was reached without them.
 - Income and upkeep are applied after resolution, then the next planning phase
   starts. Win: own every province. Lose: own none.
 
@@ -207,19 +235,48 @@ godot --headless --path . --script res://scripts/tools/balance_sim.gd
 ```
 
 It queues both sides' orders through the real GameState API and counts queue
-failures, unfinished games and turn length:
+failures, unfinished games and turn length. Each row below is a full 20-game
+run on the same seeds, so the effect of one rule is isolated:
 
 | Config | Result |
 |---|---|
-| humans 0.7, elves 1.15, simultaneous resolution, 20 games | Elves 19, Humans 1; 5% / 95%; 57.1 turns average; 0 unfinished; 0 queue failures |
+| baseline (simultaneous turns, no friction rules) | Elves 19, Humans 1; 95% / 5%; 57.1 turns; 0 unfinished |
+| + home guard militia | Elves 15, Humans 5; 75% / 25%; 100.5 turns; 0 unfinished |
+| + capital-loss penalty | identical to the row above (Elves 15, Humans 5; 100.5 turns) |
+| + conquest unrest (2 turns) | Humans 11, Elves 9; 55% / 45%; 52.4 turns; 0 unfinished |
+| + garrison doctrine, reserve on every move | Elves 12, Humans 5, 3 unfinished; 60% / 25% / 15%; 86.6 turns |
+| doctrine, attacks commit the whole army | Humans 15, Elves 4, 1 unfinished; 75% / 20% / 5%; 60.5 turns |
+| doctrine, attack keeps 1, reposition keeps the tier | Elves 10, Humans 7, 3 unfinished; 50% / 35% / 15%; 111.5 turns |
+| **final:** as above, but a stalled front attacks with everything | **Humans 9, Elves 11; 45% / 55%; 116.8 turns; 0 unfinished; 0 queue failures** |
 
-The first-mover advantage is gone: resolution order is seeded, not faction
-order. The remaining split follows the faction modifiers (Humans pay 0.7x to
-recruit, Elves get 1.15x gold/manpower) plus the Elves' stronger early army.
-A 95/5 split is still lopsided, but the task here was to remove the
-sequential-turn unfairness and make every seed finish, not to rebalance the
-factions. Do not tune by cost multipliers alone; re-measure with the 20-game
-runner above.
+Target met: no faction above ~55% and average length far above 10 turns.
+
+What each measurement says:
+
+- The **home guard** alone halves the snowball (95% -> 75%) and nearly doubles
+  game length, because a single-troop province can no longer be walked over.
+- The **capital penalty fires** (verified in the logs: income 45 -> 34 for three
+  turns) but changes no outcome in 20 games. Both bots bank enough gold that a
+  25% income dip and +30% recruit cost do not alter what they can afford, and
+  capitals usually fall within a turn or two of the end. Keep it as a fairness
+  rule, not as the anti-snowball lever.
+- **Conquest unrest** is the strongest single lever: it removes the "capture a
+  city, recruit from it next turn" loop and swings the split from 75/25 to
+  55/45 while shortening games back to ~52 turns.
+- **Garrison doctrine** is volatile. Withholding troops on attacks favours the
+  wealthier faction (Elves 60%) and produces 400-turn stalemates; committing
+  the army favours the cheaper one (Humans 75%). Keeping one troop at home on a
+  normal attack, the full tier when repositioning, and committing everything
+  after `IMPATIENCE_ROUNDS` without a battle lands on 45/55 with every seed
+  finishing.
+- `ATTACKER_LOSS_FACTOR` / `DEFENDER_LOSS_FACTOR` were **not** changed: the
+  target was reached at 0.7/1.0, and lowering lethality would mostly lengthen
+  already long wars.
+
+Do not tune by cost multipliers alone; re-measure with the 20-game runner
+above. Three of the doctrine rows ended unfinished (the 400-turn cap); a rule
+that raises the unfinished count is worse than one that slightly raises the
+win rate, so always check that column.
 
 ## Conventions and gotchas
 
@@ -260,7 +317,7 @@ runner above.
   This bot never returns `RUNNING` — a turn is resolved in one tick.
 - JSON parses every number as float: cast with `int()` when loading saves.
 - Saves go to `user://savegame.json` via a `.tmp` file + rename. Never `.tres`.
-- Save `VERSION` is **3**. World generation renames/moves generated provinces,
+- Save `VERSION` is **4**. World generation renames/moves generated provinces,
   so old saves cannot be rebuilt: `_migrate` returns `{}` for any version that
   is not the current one and the caller treats that as "no save".
 - Orders are plain dictionaries (`{"type": "move", ...}`), never Resources or
@@ -305,8 +362,10 @@ governments/laws, End of the World events, Rats faction.
 
 ## Next steps
 
-1. Lengthen games and even the split: raise starting garrisons or lower combat
-   lethality, then re-measure with the 20-game runner.
+1. Watch the 45/55 split over more seeds (run `balance_sim.gd` with a wider
+   seed range) before touching numbers; the 20-game sample still has a wide
+   confidence interval, and the doctrine rows show how easily a small rule
+   swings the result.
 2. Optional: author the tree as a `.tres` in the LimboAI editor instead of
    code, once the shape is stable.
 3. Optional: the main menu still draws a visibly pixelated planet — replace it

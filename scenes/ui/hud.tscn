@@ -243,6 +243,39 @@ theme_override_font_sizes/font_size = 13
 horizontal_alignment = 1
 vertical_alignment = 1
 
+[node name="MarchPanel" type="PanelContainer" parent="Root" unique_id=1597063300]
+visible = false
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -150.0
+offset_top = -186.0
+offset_right = 150.0
+offset_bottom = -146.0
+mouse_filter = 0
+
+[node name="MarchBox" type="HBoxContainer" parent="Root/MarchPanel" unique_id=1597063301]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 10
+
+[node name="MarchLabel" type="Label" parent="Root/MarchPanel/MarchBox" unique_id=1597063302]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.86, 0.88, 0.95, 1)
+theme_override_font_sizes/font_size = 13
+text = "Tropas a marchar"
+vertical_alignment = 1
+
+[node name="MarchCount" type="SpinBox" parent="Root/MarchPanel/MarchBox" unique_id=1597063303]
+layout_mode = 2
+custom_minimum_size = Vector2(92, 0)
+min_value = 1.0
+max_value = 1.0
+value = 1.0
+
 [node name="OrdersCard" type="PanelContainer" parent="Root" unique_id=1597063290]
 visible = false
 layout_mode = 0

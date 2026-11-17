@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 3
+const VERSION := 4
 
 
 static func has_save() -> bool:
@@ -107,6 +107,7 @@ static func _serialize_factions(game: GameState) -> Dictionary:
 			"gold": game.get_gold(faction),
 			"manpower": game.get_manpower(faction),
 			"resources": game.faction_resources.get(faction, {}).duplicate(),
+			"capital_penalty": int(game.capital_penalty.get(faction, 0)),
 		}
 	return factions
 
@@ -118,6 +119,8 @@ static func _serialize_provinces(map_state: MapState) -> Array:
 			"id": province.id,
 			"owner": province.owner_faction,
 			"garrison": province.garrison.duplicate(),
+			"home_guard": province.home_guard,
+			"unrest": province.unrest_turns,
 		})
 	return provinces
 
@@ -128,6 +131,7 @@ static func _apply_factions(game: GameState, factions: Dictionary) -> void:
 		var entry: Dictionary = factions[key]
 		game.gold[faction] = int(entry.get("gold", 0))
 		game.manpower[faction] = int(entry.get("manpower", 0))
+		game.capital_penalty[faction] = int(entry.get("capital_penalty", 0))
 
 		var stock := {"aether": 0, "iron": 0}
 		var saved_resources: Dictionary = entry.get("resources", {})
@@ -145,6 +149,8 @@ static func _apply_provinces(game: GameState, provinces: Array) -> void:
 
 		# JSON numbers come back as floats; int() keeps the model integer-based.
 		province.owner_faction = int(entry.get("owner", Balance.Faction.NEUTRAL))
+		province.home_guard = int(entry.get("home_guard", province.home_guard_cap()))
+		province.unrest_turns = int(entry.get("unrest", 0))
 		province.garrison.clear()
 
 		var garrison: Dictionary = entry.get("garrison", {})

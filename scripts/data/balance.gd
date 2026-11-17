@@ -8,6 +8,8 @@ extends RefCounted
 ## Tuning log: v0.3 raised province income and cut unit costs so armies can
 ## grow past one or two regiments, and lowered COMBAT_LOSS_FACTOR so battles
 ## leave survivors instead of wiping both sides.
+## v0.4 added the anti-snowball block (home guard, conquest unrest, capital
+## penalty, garrison doctrine); see AI_CONTEXT.md for the 20-game measurements.
 
 enum Faction { NEUTRAL = -1, HUMANS = 0, ELVES = 1 }
 enum Terrain { PLAINS = 0, MOUNTAINS = 1 }
@@ -60,6 +62,26 @@ const FACTION_MODIFIERS := {
 	Faction.HUMANS: {"gold": 1.0, "manpower": 1.0, "recruit_cost": 0.7},
 	Faction.ELVES: {"gold": 1.15, "manpower": 1.15, "recruit_cost": 1.0},
 }
+
+# --- Capital loss penalty ------------------------------------------------
+
+## Losing the capital hurts for a while instead of ending the game: income and
+## recruitment stay possible from any owned city, just worse.
+const CAPITAL_PENALTY_ENABLED := true
+## Turns the penalty lasts after the capital is taken. Counted down at the end
+## of every resolution step.
+const CAPITAL_PENALTY_TURNS := 3
+## Extra recruitment price while under the penalty (+30%).
+const CAPITAL_RECRUIT_COST_PENALTY := 0.3
+## Share of gold and manpower income lost while under the penalty (-25%).
+const CAPITAL_INCOME_PENALTY := 0.25
+
+# --- Conquest friction ---------------------------------------------------
+
+## A freshly captured province stays unsettled: no income and no recruitment
+## until it has been held this many resolution steps.
+const CONQUEST_UNREST_ENABLED := true
+const CONQUEST_UNREST_TURNS := 2
 
 # --- Combat --------------------------------------------------------------
 
@@ -127,6 +149,29 @@ const STARTING_UNIT := {
 	Faction.HUMANS: "human_swordsmen",
 	Faction.ELVES: "elf_boar",
 }
+
+# --- Home guard ----------------------------------------------------------
+
+## Defensive militia present in every owned province. It counts on defence
+## only, never leaves, costs no upkeep and is lost with the province. Set the
+## switch to false to disable the whole feature.
+const HOME_GUARD_ENABLED := true
+const HOME_GUARD_MAX := 2
+const HOME_GUARD_CAPITAL_MAX := 4
+## Militia raised per turn, up to the cap. A captured province starts at 0.
+const HOME_GUARD_REGEN := 1
+## Defence power per militia, before terrain. Two militia are worth roughly
+## one swordsman on defence but add no attack and no upkeep.
+const HOME_GUARD_DEFENSE := 4
+
+# --- Garrison doctrine ---------------------------------------------------
+
+## Troops the bot leaves behind when it marches; it sends the rest. Larger on
+## the enemy border and in the capital, so a province is never stripped bare.
+## Interiors only need a token force; the front needs enough to survive a raid.
+const GARRISON_INTERIOR := 1
+const GARRISON_BORDER := 2
+const GARRISON_CAPITAL := 3
 
 # --- Helpers -------------------------------------------------------------
 

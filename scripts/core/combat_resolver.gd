@@ -25,7 +25,8 @@ static func resolve(
 		random.randomize()
 
 	var attacker_total := troop_count(attacking_units)
-	var defender_total := target.total_troops()
+	var defender_total := target.defence_troops()
+	var militia := maxi(target.home_guard, 0) if Balance.HOME_GUARD_ENABLED else 0
 
 	if attacker_total <= 0:
 		return _result(attacker_faction, target, 0, 0, 0, 0, {}, target.garrison.duplicate(true), false)
@@ -50,13 +51,17 @@ static func resolve(
 	attacker_losses = clampi(attacker_losses, 0, attacker_total)
 	defender_losses = clampi(defender_losses, 0, defender_total)
 
-	target.remove_troops(defender_losses)
+	# The levy takes the first losses, then the professional garrison. Militia
+	# losses leave the province, they never transfer to the attacker.
+	var militia_losses: int = mini(militia, defender_losses)
+	target.home_guard = militia - militia_losses
+	target.remove_troops(defender_losses - militia_losses)
 
 	var attacker_survivors: Dictionary = attacking_units.duplicate(true)
 	apply_losses(attacker_survivors, attacker_losses)
 
-	var captured := target.total_troops() == 0
-	return _result(
+	var captured := target.total_troops() == 0 and target.home_guard == 0
+	var result := _result(
 		attacker_faction,
 		target,
 		attack_power,
@@ -67,6 +72,8 @@ static func resolve(
 		target.garrison.duplicate(true),
 		captured,
 	)
+	result["home_guard_losses"] = militia_losses
+	return result
 
 
 static func troop_count(units: Dictionary) -> int:
@@ -140,5 +147,7 @@ static func _result(
 		"defender_losses": defender_losses,
 		"attacker_survivors": attacker_survivors,
 		"defender_survivors": defender_survivors,
+		"defender_home_guard": target.home_guard,
+		"home_guard_losses": 0,
 		"captured": captured,
 	}

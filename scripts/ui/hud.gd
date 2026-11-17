@@ -50,6 +50,9 @@ var _game_over_winner := -2
 @onready var _options: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Options
 @onready var _menu: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Menu
 @onready var _hint: Label = $Root/Hint
+@onready var _march_panel: PanelContainer = $Root/MarchPanel
+@onready var _march_label: Label = $Root/MarchPanel/MarchBox/MarchLabel
+@onready var _march_count: SpinBox = $Root/MarchPanel/MarchBox/MarchCount
 @onready var _orders_card: PanelContainer = $Root/OrdersCard
 @onready var _orders_title: Label = $Root/OrdersCard/OrdersBox/OrdersTitle
 @onready var _orders_scroll: ScrollContainer = $Root/OrdersCard/OrdersBox/OrdersScroll
@@ -221,16 +224,22 @@ func _refresh_selection() -> void:
 		Loc.territory_type(province.territory_type),
 		Loc.faction_name(province.owner_faction),
 	]
+	if province.unrest_turns > 0:
+		_meta.text += " · " + Loc.t("unrest", [province.unrest_turns])
 
 	var troops := province.total_troops()
+	var militia := province.home_guard if Balance.HOME_GUARD_ENABLED else 0
 	_troops.text = "⚔ " + (Loc.t("troops", [troops]) if troops > 0 else Loc.t("troops_none"))
-	_troops.add_theme_color_override("font_color", UiStyle.TEXT if troops > 0 else UiStyle.TEXT_DIM)
+	if militia > 0:
+		_troops.text += " · " + Loc.t("militia", [militia])
+	_troops.add_theme_color_override(
+		"font_color", UiStyle.TEXT if (troops > 0 or militia > 0) else UiStyle.TEXT_DIM
+	)
 
-	if troops > 0:
+	# defense_power() already applies the terrain multiplier.
+	if troops > 0 or militia > 0:
 		_attack.text = "%s %.0f" % [Loc.t("stat_attack"), province.attack_power()]
-		_defense.text = "%s %.0f" % [
-			Loc.t("stat_defense"), province.defense_power() * Balance.terrain_defense(province.terrain)
-		]
+		_defense.text = "%s %.0f" % [Loc.t("stat_defense"), province.defense_power()]
 	else:
 		_attack.text = ""
 		_defense.text = ""
@@ -270,7 +279,8 @@ func _refresh_buttons() -> void:
 		UiStyle.apply_hud_button(_end_turn)
 
 	var is_city_province := province != null and province.is_city
-	var can_recruit_base := player_planning and owned and is_city_province
+	var in_unrest := province != null and province.unrest_turns > 0
+	var can_recruit_base := player_planning and owned and is_city_province and not in_unrest
 
 	var unit_ids := UnitCatalog.units_for_faction(PLAYER)
 	var buttons: Array[Button] = [_recruit_a, _recruit_b]
@@ -283,13 +293,18 @@ func _refresh_buttons() -> void:
 
 		var unit_id := unit_ids[index]
 		var unit := UnitCatalog.get_unit(unit_id)
-		var costs := unit.costs_for(PLAYER)
+		var costs := game.recruit_costs(PLAYER, unit_id)
 		var gold_cost := int(costs["gold"])
 		var manpower_cost := int(costs["manpower"])
 
 		button.tooltip_text = Loc.t("recruit_tooltip", [
 			Loc.unit_name(unit_id), int(unit.attack), int(unit.defense), int(unit.upkeep),
 		])
+		if game.capital_penalty_turns(PLAYER) > 0:
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text,
+				Loc.t("capital_penalty", [game.capital_penalty_turns(PLAYER)]),
+			]
 
 		if province == null:
 			button.text = "+ %s" % Loc.unit_name(unit_id)
@@ -303,6 +318,13 @@ func _refresh_buttons() -> void:
 			button.disabled = true
 			button.tooltip_text = "%s\n%s" % [
 				button.tooltip_text, Loc.t("recruit_city_only"),
+			]
+		elif in_unrest:
+			# A province just taken cannot raise troops until it settles.
+			button.text = "+ %s" % Loc.unit_name(unit_id)
+			button.disabled = true
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text, Loc.t("recruit_unrest", [province.unrest_turns]),
 			]
 		else:
 			button.text = Loc.t("recruit", [
@@ -326,6 +348,8 @@ func _retranslate() -> void:
 	# change must not resurrect one that already timed out.
 	if _battle_card.visible and not _last_battles.is_empty():
 		_render_battles(false)
+	if _march_panel.visible:
+		_march_label.text = Loc.t("march_troops")
 
 
 # --- Player actions ------------------------------------------------------
@@ -361,6 +385,7 @@ func _on_march_pressed() -> void:
 
 	march_origin_id = selected_province_id
 	_hint.text = Loc.t("hint_march")
+	_open_march_panel(province.total_troops())
 	if map_view != null:
 		map_view.set_march_targets(PackedStringArray(province.neighbors))
 	_refresh_buttons()
@@ -426,7 +451,8 @@ func _handle_march_click(target_id: String) -> void:
 		return
 
 	var origin := map.get_province(origin_id)
-	var result := game.queue_move(PLAYER, origin_id, target_id, origin.garrison.duplicate())
+	var wanted := mini(int(_march_count.value), origin.total_troops())
+	var result := game.queue_move(PLAYER, origin_id, target_id, _units_for_count(origin.garrison, wanted))
 	_cancel_march()
 
 	if not bool(result.get("ok", false)):
@@ -440,11 +466,37 @@ func _handle_march_click(target_id: String) -> void:
 
 func _cancel_march() -> void:
 	march_origin_id = ""
+	_march_panel.visible = false
 	if map_view != null:
 		map_view.set_march_targets(PackedStringArray())
 	if _march != null:
 		UiStyle.apply_hud_button(_march)
 	_refresh_buttons()
+
+
+## Shows the troop-count chooser for the armed march, defaulting to the whole
+## garrison so the player can still send everything with one click.
+func _open_march_panel(available: int) -> void:
+	_march_label.text = Loc.t("march_troops")
+	_march_count.min_value = 1
+	_march_count.max_value = maxi(available, 1)
+	_march_count.value = maxi(available, 1)
+	_march_panel.visible = true
+
+
+## The first `count` troops of a garrison, used for partial marches. Unit order
+## is stable, so the same count always sends the same stack.
+func _units_for_count(garrison: Dictionary, count: int) -> Dictionary:
+	var sending: Dictionary = {}
+	var remaining: int = maxi(count, 0)
+	for unit_id: String in garrison.keys():
+		if remaining <= 0:
+			break
+		var take: int = mini(int(garrison[unit_id]), remaining)
+		if take > 0:
+			sending[unit_id] = take
+			remaining -= take
+	return sending
 
 
 func _select(province_id: String) -> void:

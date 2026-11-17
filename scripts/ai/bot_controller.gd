@@ -25,7 +25,6 @@ const MAX_RECRUITS_PER_TURN := 3
 const MAX_BATTLES_PER_TURN := 6
 const ATTACK_SAFETY_MARGIN := 1.0
 const IMPATIENCE_ROUNDS := 3
-const CAPITAL_MIN_GARRISON := 2
 
 var game: GameState
 var turn_manager: Node
@@ -131,7 +130,7 @@ func recruit_phase() -> void:
 			var unit := UnitCatalog.get_unit(unit_id)
 			if unit == null:
 				continue
-			var costs := unit.costs_for(bot_faction)
+			var costs := game.recruit_costs(bot_faction, unit_id)
 			if not game.can_afford(bot_faction, int(costs["gold"]), int(costs["manpower"])):
 				continue
 			if unit.gold_cost > best_cost:
@@ -145,15 +144,16 @@ func recruit_phase() -> void:
 			break
 
 
-## The capital recruits while it is held, otherwise the first owned province.
+## The capital recruits while it is held and settled, otherwise the first owned
+## city that is not still in conquest unrest.
 func _recruitment_province() -> ProvinceData:
 	var capital := game.map_state.capital_of(bot_faction)
-	if capital != null and capital.is_owned_by(bot_faction):
+	if capital != null and capital.is_owned_by(bot_faction) and capital.unrest_turns <= 0:
 		return capital
 
 	var owned := game.map_state.provinces_owned_by(bot_faction)
 	for province in owned:
-		if province.is_city:
+		if province.is_city and province.unrest_turns <= 0:
 			return province
 	return null
 
@@ -189,26 +189,37 @@ func _execute_attacks(ignore_odds: bool) -> int:
 			continue
 		if game.has_move_order(bot_faction, province.id):
 			continue
-		var target := best_attack_target(province, ignore_odds)
+		# An attack keeps a token guard at home, but a stalled front goes all in:
+		# withholding troops during a stalemate produced wars that never ended.
+		var reserve := 0 if ignore_odds else Balance.GARRISON_INTERIOR
+		var sending := _withhold(province.garrison.duplicate(), reserve)
+		if CombatResolver.troop_count(sending) <= 0:
+			continue
+		var target := best_attack_target(province, sending, ignore_odds)
 		if target == null:
 			continue
-		var result := game.queue_move(bot_faction, province.id, target.id, province.garrison.duplicate())
+		var result := game.queue_move(bot_faction, province.id, target.id, sending)
 		if result.get("ok", false):
 			battles += 1
 	return battles
 
 
-func best_attack_target(province: ProvinceData, ignore_odds: bool = false) -> ProvinceData:
+func best_attack_target(
+	province: ProvinceData,
+	sending: Dictionary,
+	ignore_odds: bool = false,
+) -> ProvinceData:
 	var best: ProvinceData = null
 	var best_ratio := 0.0
+	var attack := _units_attack_power(sending)
 
 	for target in game.map_state.neighbors_of(province.id):
 		if target.is_owned_by(bot_faction):
 			continue
-		if target.total_troops() <= 0:
+		if target.defence_troops() <= 0:
 			continue
 		var defense := maxf(target.defense_power(), 1.0)
-		var ratio := province.attack_power() / defense
+		var ratio := attack / defense
 		if not ignore_odds and ratio < ATTACK_SAFETY_MARGIN:
 			continue
 		if ratio > best_ratio:
@@ -236,7 +247,7 @@ func advance_phase() -> void:
 		if game.has_move_order(bot_faction, province.id):
 			continue
 
-		var reserve := CAPITAL_MIN_GARRISON if province.is_capital else 1
+		var reserve := _minimum_garrison(province)
 		var sending := _withhold(province.garrison.duplicate(), reserve)
 		if CombatResolver.troop_count(sending) <= 0:
 			continue
@@ -273,7 +284,7 @@ func _expand_into_open_ground() -> void:
 		if game.has_move_order(bot_faction, province.id):
 			continue
 
-		var reserve := CAPITAL_MIN_GARRISON if province.is_capital else 1
+		var reserve := _minimum_garrison(province)
 		var sending := _withhold(province.garrison.duplicate(), reserve)
 		if CombatResolver.troop_count(sending) <= 0:
 			continue
@@ -289,7 +300,7 @@ func _best_open_neighbor(province: ProvinceData) -> ProvinceData:
 	for target in game.map_state.neighbors_of(province.id):
 		if target.is_owned_by(bot_faction):
 			continue
-		if target.total_troops() > 0:
+		if target.defence_troops() > 0:
 			continue
 		if not target.is_neutral():
 			return target
@@ -298,9 +309,9 @@ func _best_open_neighbor(province: ProvinceData) -> ProvinceData:
 	return neutral
 
 
-## An army may enter friendly land or an undefended province without fighting.
+## An army may enter friendly land or a province with no defence left.
 func _can_enter(province: ProvinceData) -> bool:
-	return province.is_owned_by(bot_faction) or province.total_troops() <= 0
+	return province.is_owned_by(bot_faction) or province.defence_troops() <= 0
 
 
 func _has_queued_move(faction: int, from_id: String, to_id: String) -> bool:
@@ -372,7 +383,7 @@ func _nearest_open_step(from_id: String) -> ProvinceData:
 			if came_from.has(neighbor.id):
 				continue
 			came_from[neighbor.id] = current
-			if neighbor.is_neutral() and neighbor.total_troops() <= 0:
+			if neighbor.is_neutral() and neighbor.defence_troops() <= 0:
 				return _first_step(came_from, from_id, neighbor.id)
 			if neighbor.is_owned_by(bot_faction):
 				frontier.append(neighbor.id)
@@ -402,6 +413,38 @@ func _withhold(units: Dictionary, amount: int) -> Dictionary:
 		if int(kept[unit_id]) <= 0:
 			kept.erase(unit_id)
 	return kept
+
+
+## Troops this province should keep when it marches. Capitals and provinces
+## bordering the enemy hold more; interior provinces only a token force.
+func _minimum_garrison(province: ProvinceData) -> int:
+	if province.is_capital:
+		return Balance.GARRISON_CAPITAL
+	if _borders_enemy(province):
+		return Balance.GARRISON_BORDER
+	return Balance.GARRISON_INTERIOR
+
+
+func _borders_enemy(province: ProvinceData) -> bool:
+	var enemy := _enemy_faction()
+	for neighbor in game.map_state.neighbors_of(province.id):
+		if neighbor.is_owned_by(enemy):
+			return true
+	return false
+
+
+## Attack power of a departing force, so odds are judged on what actually
+## marches rather than on the garrison it leaves behind.
+func _units_attack_power(units: Dictionary) -> float:
+	var power := 0.0
+	for unit_id: String in units.keys():
+		var count := int(units[unit_id])
+		if count <= 0:
+			continue
+		var unit := UnitCatalog.get_unit(unit_id)
+		if unit != null:
+			power += float(unit.attack) * float(count)
+	return power
 
 
 func _enemy_faction() -> int:

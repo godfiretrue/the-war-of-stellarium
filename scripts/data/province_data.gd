@@ -22,6 +22,14 @@ extends Resource
 ## unit_id -> troop count
 @export var garrison: Dictionary = {}
 
+## Defensive militia raised in this province. It never marches, adds no
+## upkeep and is lost when the province changes hands.
+@export var home_guard: int = 0
+
+## Turns of conquest unrest left: while positive the province produces no
+## income and cannot recruit. Set on capture, counted down each resolution.
+@export var unrest_turns: int = 0
+
 
 func is_neutral() -> bool:
 	return owner_faction == Balance.Faction.NEUTRAL
@@ -38,6 +46,21 @@ func total_troops() -> int:
 	return total
 
 
+## Militia cap for this province: capitals hold a larger levy.
+func home_guard_cap() -> int:
+	if not Balance.HOME_GUARD_ENABLED:
+		return 0
+	return Balance.HOME_GUARD_CAPITAL_MAX if is_capital else Balance.HOME_GUARD_MAX
+
+
+## Everything that defends the province: mobile garrison plus militia. Only the
+## garrison can leave, so movement rules keep using total_troops().
+func defence_troops() -> int:
+	if not Balance.HOME_GUARD_ENABLED:
+		return total_troops()
+	return total_troops() + maxi(home_guard, 0)
+
+
 ## Raw offensive strength of the garrison, before terrain and randomness.
 func attack_power() -> float:
 	var power := 0.0
@@ -51,7 +74,8 @@ func attack_power() -> float:
 	return power
 
 
-## Defensive strength of the garrison, including the terrain multiplier.
+## Defensive strength of the garrison and the militia, including the terrain
+## multiplier.
 func defense_power() -> float:
 	var power := 0.0
 	for unit_id: String in garrison.keys():
@@ -61,6 +85,8 @@ func defense_power() -> float:
 		var unit := UnitCatalog.get_unit(unit_id)
 		if unit != null:
 			power += float(unit.defense) * float(count)
+	if Balance.HOME_GUARD_ENABLED:
+		power += float(maxi(home_guard, 0)) * Balance.HOME_GUARD_DEFENSE
 	return power * Balance.terrain_defense(terrain)
 
 

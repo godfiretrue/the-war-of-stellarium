@@ -161,6 +161,10 @@ func _resolve() -> void:
 			int(income["gold"]), int(income["manpower"]), upkeep,
 		])
 
+	# Militia regeneration and other end-of-turn bookkeeping. It runs after
+	# income so a province captured this turn produces nothing until it settles.
+	game.advance_turn_state()
+
 	last_resolution = summary
 	resolution_finished.emit(summary)
 
