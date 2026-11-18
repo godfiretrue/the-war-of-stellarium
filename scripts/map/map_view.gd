@@ -84,7 +84,7 @@ func _ready() -> void:
 	# views through _rebuild_views(); never build the province set twice.
 	if _views.is_empty():
 		_build_views()
-	_overlay.queue_redraw()
+	_redraw_overlay()
 	_log_map_summary()
 
 	var capital := state.capital_of(Balance.PLAYER_FACTION)
@@ -105,6 +105,14 @@ func _fit_world() -> void:
 	_base_scale = area / WORLD_SIZE
 	scale = _base_scale
 	position = Vector2.ZERO
+
+
+## The overlay is created in _ready(), but the HUD is a child of this node and
+## its _ready() runs first. A menu-started game already has map_state by then,
+## so HUD refreshes can reach here before the overlay exists.
+func _redraw_overlay() -> void:
+	if _overlay != null:
+		_overlay.queue_redraw()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -141,7 +149,7 @@ func select_province(province_id: String) -> void:
 		var view: ProvinceView = _views[view_id]
 		view.set_selected(view_id == province_id)
 	province_selected.emit(province_id)
-	_overlay.queue_redraw()
+	_redraw_overlay()
 	_log_selection(province_id)
 
 
@@ -160,7 +168,7 @@ func set_march_targets(province_ids: PackedStringArray, origin_id: String = "") 
 		var view: ProvinceView = _views[view_id]
 		var valid := _march_targets.has(view_id)
 		view.set_march_mode(active, valid)
-	_overlay.queue_redraw()
+	_redraw_overlay()
 
 
 ## Highlights the arrow and both provinces of an order hovered in the list.
@@ -171,7 +179,7 @@ func set_hovered_order(order: Dictionary) -> void:
 		var view: ProvinceView = _views[view_id]
 		var involved := not key.is_empty() and _view_in_order(view_id)
 		view.set_order_highlight(involved)
-	_overlay.queue_redraw()
+	_redraw_overlay()
 
 
 ## Camera focus used by the battle report: a short zoom onto the province that
@@ -208,7 +216,7 @@ func refresh_all() -> void:
 	for view_id: String in _views.keys():
 		var view: ProvinceView = _views[view_id]
 		view.refresh()
-	_overlay.queue_redraw()
+	_redraw_overlay()
 
 
 ## The terrain is one world-sized rectangle painted by a shader that reads the
@@ -262,7 +270,7 @@ func _rebuild_views() -> void:
 	selected_province_id = ""
 	_build_terrain()
 	_build_views()
-	_overlay.queue_redraw()
+	_redraw_overlay()
 
 
 func _on_state_changed() -> void:
@@ -280,8 +288,7 @@ func _on_phase_changed(_phase: int) -> void:
 
 
 func _on_orders_changed() -> void:
-	if _overlay != null:
-		_overlay.queue_redraw()
+	_redraw_overlay()
 
 
 func _update_hover(world_point: Vector2) -> void:

@@ -357,6 +357,18 @@ win rate, so always check that column.
 - Do not put emoji or dingbat glyphs in HUD labels: the system font renders
   some as coloured emoji and others as tofu boxes. Map icons and resource chips
   use `UiIcon` instead; only plain arrows already proven in the theme survive.
+- `HUD` is a child of `Map`, and Godot readies children before parents: the
+  HUD's `_ready()` runs **before** `MapView._ready()`, so `MapView._overlay`
+  does not exist yet. The menu entry points call `start_game()`/`load_game()`
+  before the scene switch, so `game.map_state` is already set when the HUD
+  readies and `_refresh_orders()` calls `MapView.set_hovered_order()`.
+  Overlay redraws must go through `MapView._redraw_overlay()` (null-safe);
+  never call `_overlay.queue_redraw()` directly.
+- Smoke-test startup through the **main menu** (New Game and Continue), not
+  only `res://scenes/map/map.tscn`. Loading the map directly leaves
+  `game.map_state` null during `HUD._ready()`, so the HUD refresh early-returns
+  and this class of bug stays hidden. In the editor a runtime error parks the
+  game in the debugger, which looks like a crash.
 - The MCP game view is embedded in the editor and ignores window resizing
   (`DisplayServer.window_set_size` / `Window.size`). To inspect the real HUD,
   set `content_scale_size = Vector2i(1152, 648)` and
