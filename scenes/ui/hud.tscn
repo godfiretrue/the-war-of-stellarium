@@ -1,146 +1,348 @@
-[gd_scene load_steps=3 format=3 uid="uid://b8qq7wh0l1dft"]
+[gd_scene load_steps=4 format=3 uid="uid://b8qq7wh0l1dft"]
 
 [ext_resource type="Script" uid="uid://cilg6x0xukmat" path="res://scripts/ui/hud.gd" id="1_0mwgc"]
 [ext_resource type="PackedScene" uid="uid://c0g4k7settings01" path="res://scenes/ui/settings_panel.tscn" id="2_settings"]
+[ext_resource type="Script" path="res://scripts/ui/ui_icon.gd" id="3_uicon"]
 
-[node name="HUD" type="CanvasLayer" unique_id=480278888]
+[node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_0mwgc")
 
-[node name="Root" type="Control" parent="." unique_id=540279485]
+[node name="Root" type="Control" parent="."]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
 
-[node name="TopStrip" type="ColorRect" parent="Root" unique_id=592251364]
+[node name="TopBar" type="Control" parent="Root"]
 layout_mode = 0
 anchor_right = 1.0
-offset_bottom = 52.0
-mouse_filter = 0
-color = Color(0.043137256, 0.050980393, 0.07058824, 0.92156863)
+offset_bottom = 48.0
+grow_horizontal = 2
+mouse_filter = 2
 
-[node name="TopMargin" type="MarginContainer" parent="Root/TopStrip" unique_id=812390411]
+[node name="Bar" type="ColorRect" parent="Root/TopBar"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
-theme_override_constants/margin_left = 16
-theme_override_constants/margin_top = 7
-theme_override_constants/margin_right = 16
-theme_override_constants/margin_bottom = 7
+color = Color(0.03529412, 0.043137256, 0.06666667, 0.96862745)
 
-[node name="TopRow" type="HBoxContainer" parent="Root/TopStrip/TopMargin" unique_id=987201053]
+[node name="GoldLine" type="ColorRect" parent="Root/TopBar"]
+layout_mode = 1
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -2.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+color = Color(0.8039216, 0.6745098, 0.36078432, 0.8)
+
+[node name="TopMargin" type="MarginContainer" parent="Root/TopBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 6
+
+[node name="TopRow" type="HBoxContainer" parent="Root/TopBar/TopMargin"]
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 14
 
-[node name="FactionDot" type="ColorRect" parent="Root/TopStrip/TopMargin/TopRow" unique_id=220118451]
-custom_minimum_size = Vector2(10, 10)
+[node name="Emblem" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
+custom_minimum_size = Vector2(26, 26)
 layout_mode = 2
 size_flags_vertical = 4
 mouse_filter = 2
+
+[node name="FactionDot" type="ColorRect" parent="Root/TopBar/TopMargin/TopRow/Emblem"]
+custom_minimum_size = Vector2(12, 12)
+layout_mode = 2
+mouse_filter = 2
 color = Color(0.35, 0.6, 1, 1)
 
-[node name="FactionName" type="Label" parent="Root/TopStrip/TopMargin/TopRow" unique_id=2006125206]
+[node name="FactionName" type="Label" parent="Root/TopBar/TopMargin/TopRow"]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.9019608, 0.9098039, 0.9411765, 1)
-theme_override_font_sizes/font_size = 16
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(0.87058824, 0.8862745, 0.94509804, 1)
+theme_override_font_sizes/font_size = 13
 text = "Humanos"
-vertical_alignment = 1
 
-[node name="Spacer" type="Control" parent="Root/TopStrip/TopMargin/TopRow" unique_id=331129481]
+[node name="Spacer" type="Control" parent="Root/TopBar/TopMargin/TopRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="Gold" type="Label" parent="Root/TopStrip/TopMargin/TopRow" unique_id=278843940]
+[node name="GoldChip" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.9098039, 0.76862746, 0.41568628, 1)
-theme_override_font_sizes/font_size = 14
-text = "🪙 0"
-vertical_alignment = 1
+size_flags_vertical = 4
+mouse_filter = 1
 
-[node name="Manpower" type="Label" parent="Root/TopStrip/TopMargin/TopRow" unique_id=2081387228]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.56078434, 0.78039217, 0.9098039, 1)
-theme_override_font_sizes/font_size = 14
-text = "👥 0"
-vertical_alignment = 1
-
-[node name="Resource" type="Label" parent="Root/TopStrip/TopMargin/TopRow" unique_id=1977137837]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.7882353, 0.6509804, 0.9098039, 1)
-theme_override_font_sizes/font_size = 14
-text = "✦ 0"
-vertical_alignment = 1
-
-[node name="TurnBadge" type="PanelContainer" parent="Root/TopStrip/TopMargin/TopRow" unique_id=1727576550]
+[node name="GoldBox" type="HBoxContainer" parent="Root/TopBar/TopMargin/TopRow/GoldChip"]
 layout_mode = 2
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Turn" type="Label" parent="Root/TopStrip/TopMargin/TopRow/TurnBadge" unique_id=902183774]
+[node name="GoldIcon" type="Control" parent="Root/TopBar/TopMargin/TopRow/GoldChip/GoldBox"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+script = ExtResource("3_uicon")
+kind = 0
+tint = Color(0.91, 0.77, 0.42, 1)
+
+[node name="Gold" type="Label" parent="Root/TopBar/TopMargin/TopRow/GoldChip/GoldBox"]
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(0.98039216, 0.83137256, 0.4509804, 1)
+theme_override_font_sizes/font_size = 13
+text = "0"
+
+[node name="ManpowerChip" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 1
+
+[node name="ManpowerBox" type="HBoxContainer" parent="Root/TopBar/TopMargin/TopRow/ManpowerChip"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="ManpowerIcon" type="Control" parent="Root/TopBar/TopMargin/TopRow/ManpowerChip/ManpowerBox"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+script = ExtResource("3_uicon")
+kind = 1
+tint = Color(0.56, 0.78, 0.91, 1)
+
+[node name="Manpower" type="Label" parent="Root/TopBar/TopMargin/TopRow/ManpowerChip/ManpowerBox"]
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(0.56078434, 0.78039217, 0.9098039, 1)
+theme_override_font_sizes/font_size = 13
+text = "0"
+
+[node name="ResourceChip" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 1
+
+[node name="ResourceBox" type="HBoxContainer" parent="Root/TopBar/TopMargin/TopRow/ResourceChip"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="ResourceIcon" type="Control" parent="Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+script = ExtResource("3_uicon")
+kind = 2
+tint = Color(0.79, 0.65, 0.91, 1)
+
+[node name="Resource" type="Label" parent="Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox"]
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(0.7882353, 0.6509804, 0.9098039, 1)
+theme_override_font_sizes/font_size = 13
+text = "0"
+
+[node name="TurnBadge" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+
+[node name="Turn" type="Label" parent="Root/TopBar/TopMargin/TopRow/TurnBadge"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.98, 0.9, 0.66, 1)
-theme_override_font_sizes/font_size = 13
+theme_override_font_sizes/font_size = 11
 text = "Turno 1 · Jogador"
 vertical_alignment = 1
 
-[node name="BottomStrip" type="ColorRect" parent="Root" unique_id=1585972314]
+[node name="MenuButton" type="Button" parent="Root/TopBar/TopMargin/TopRow"]
+custom_minimum_size = Vector2(34, 30)
+layout_mode = 2
+size_flags_vertical = 4
+text = "☰"
+flat = true
+
+[node name="MenuPopup" type="PopupMenu" parent="Root/TopBar"]
+size = Vector2i(180, 100)
+
+[node name="OrdersTab" type="Button" parent="Root"]
 layout_mode = 0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_top = -104.0
+offset_left = 12.0
+offset_top = 58.0
+offset_right = 118.0
+offset_bottom = 88.0
+text = "Ordens"
+
+[node name="OrdersCard" type="PanelContainer" parent="Root"]
+visible = false
+layout_mode = 0
+offset_left = 12.0
+offset_top = 94.0
+offset_right = 312.0
+offset_bottom = 94.0
 mouse_filter = 0
-color = Color(0.043137256, 0.050980393, 0.07058824, 0.9411765)
 
-[node name="BottomMargin" type="MarginContainer" parent="Root/BottomStrip" unique_id=715391077]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
+[node name="OrdersBox" type="VBoxContainer" parent="Root/OrdersCard"]
+layout_mode = 2
 mouse_filter = 2
-theme_override_constants/margin_left = 16
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 16
-theme_override_constants/margin_bottom = 12
+theme_override_constants/separation = 6
 
-[node name="BottomRow" type="HBoxContainer" parent="Root/BottomStrip/BottomMargin" unique_id=1464028342]
+[node name="OrdersHeader" type="HBoxContainer" parent="Root/OrdersCard/OrdersBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="OrdersTitle" type="Label" parent="Root/OrdersCard/OrdersBox/OrdersHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.98, 0.83, 0.45, 1)
+theme_override_font_sizes/font_size = 13
+text = "Ordens em fila"
+
+[node name="OrdersCollapse" type="Button" parent="Root/OrdersCard/OrdersBox/OrdersHeader"]
+custom_minimum_size = Vector2(24, 22)
+layout_mode = 2
+text = "◀"
+flat = true
+
+[node name="OrdersScroll" type="ScrollContainer" parent="Root/OrdersCard/OrdersBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="OrdersList" type="VBoxContainer" parent="Root/OrdersCard/OrdersBox/OrdersScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="BattleCard" type="PanelContainer" parent="Root"]
+visible = false
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -356.0
+offset_top = 62.0
+offset_right = -12.0
+offset_bottom = 62.0
+mouse_filter = 0
+
+[node name="BattleBox" type="VBoxContainer" parent="Root/BattleCard"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="BattleHeader" type="HBoxContainer" parent="Root/BattleCard/BattleBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="BattleTitle" type="Label" parent="Root/BattleCard/BattleBox/BattleHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.98, 0.83, 0.45, 1)
+theme_override_font_sizes/font_size = 13
+text = ""
+autowrap_mode = 2
+
+[node name="BattleDismiss" type="Button" parent="Root/BattleCard/BattleBox/BattleHeader"]
+custom_minimum_size = Vector2(24, 22)
+layout_mode = 2
+text = "✕"
+flat = true
+
+[node name="BattleScroll" type="ScrollContainer" parent="Root/BattleCard/BattleBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="BattleList" type="VBoxContainer" parent="Root/BattleCard/BattleBox/BattleScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="Toast" type="PanelContainer" parent="Root"]
+visible = false
+layout_mode = 0
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -216.0
+offset_top = 62.0
+offset_right = 216.0
+offset_bottom = 62.0
+mouse_filter = 2
+
+[node name="ToastLabel" type="Label" parent="Root/Toast"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.8666667, 0.6, 1)
+theme_override_font_sizes/font_size = 13
+text = ""
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="BottomPanel" type="PanelContainer" parent="Root"]
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -380.0
+offset_top = -130.0
+offset_right = 380.0
+offset_bottom = -14.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 0
+
+[node name="PanelRow" type="HBoxContainer" parent="Root/BottomPanel"]
 layout_mode = 2
 mouse_filter = 2
 theme_override_constants/separation = 10
 
-[node name="SelectionCard" type="HBoxContainer" parent="Root/BottomStrip/BottomMargin/BottomRow" unique_id=776611234]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 4
-mouse_filter = 2
-theme_override_constants/separation = 12
-
-[node name="AccentBar" type="ColorRect" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard" unique_id=445120087]
-custom_minimum_size = Vector2(4, 0)
+[node name="AccentBar" type="ColorRect" parent="Root/BottomPanel/PanelRow"]
+custom_minimum_size = Vector2(3, 0)
 layout_mode = 2
 size_flags_vertical = 1
 mouse_filter = 2
 color = Color(0.35, 0.6, 1, 1)
 
-[node name="InfoBox" type="VBoxContainer" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard" unique_id=552047018]
+[node name="InfoBox" type="VBoxContainer" parent="Root/BottomPanel/PanelRow"]
+custom_minimum_size = Vector2(200, 0)
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
-theme_override_constants/separation = 2
+theme_override_constants/separation = 3
 
-[node name="ProvinceName" type="Label" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox" unique_id=881002915]
+[node name="ProvinceName" type="Label" parent="Root/BottomPanel/PanelRow/InfoBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.9490196, 0.9529412, 0.9843137, 1)
-theme_override_font_sizes/font_size = 17
+theme_override_font_sizes/font_size = 20
 text = "Selecione uma província"
 clip_text = true
 text_overrun_behavior = 3
 
-[node name="ProvinceMeta" type="Label" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox" unique_id=881002916]
+[node name="ProvinceMeta" type="Label" parent="Root/BottomPanel/PanelRow/InfoBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.61960787, 0.64705884, 0.7372549, 1)
 theme_override_font_sizes/font_size = 11
@@ -148,120 +350,135 @@ text = ""
 clip_text = true
 text_overrun_behavior = 3
 
-[node name="StatsRow" type="HBoxContainer" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox" unique_id=881002917]
+[node name="StatsRow" type="HBoxContainer" parent="Root/BottomPanel/PanelRow/InfoBox"]
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 14
 
-[node name="Troops" type="Label" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow" unique_id=881002918]
+[node name="Troops" type="Label" parent="Root/BottomPanel/PanelRow/InfoBox/StatsRow"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.86, 0.88, 0.95, 1)
-theme_override_font_sizes/font_size = 12
+theme_override_font_sizes/font_size = 11
 text = ""
 
-[node name="Attack" type="Label" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow" unique_id=881002919]
+[node name="Attack" type="Label" parent="Root/BottomPanel/PanelRow/InfoBox/StatsRow"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.61960787, 0.64705884, 0.7372549, 1)
-theme_override_font_sizes/font_size = 12
+theme_override_font_sizes/font_size = 11
 text = ""
 
-[node name="Defense" type="Label" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow" unique_id=881002920]
+[node name="Defense" type="Label" parent="Root/BottomPanel/PanelRow/InfoBox/StatsRow"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.61960787, 0.64705884, 0.7372549, 1)
-theme_override_font_sizes/font_size = 12
+theme_override_font_sizes/font_size = 11
 text = ""
 
-[node name="Income" type="Label" parent="Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow" unique_id=881002921]
+[node name="Income" type="Label" parent="Root/BottomPanel/PanelRow/InfoBox/StatsRow"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.7882353, 0.6509804, 0.9098039, 1)
-theme_override_font_sizes/font_size = 12
+theme_override_font_sizes/font_size = 11
 text = ""
 
-[node name="Actions" type="HBoxContainer" parent="Root/BottomStrip/BottomMargin/BottomRow" unique_id=994412301]
+[node name="InfoSeparator" type="ColorRect" parent="Root/BottomPanel/PanelRow"]
+custom_minimum_size = Vector2(1, 0)
 layout_mode = 2
-size_flags_vertical = 4
+size_flags_vertical = 1
 mouse_filter = 2
-theme_override_constants/separation = 8
+color = Color(0.72, 0.58, 0.3, 0.45)
 
-[node name="RecruitA" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=1129349121]
-custom_minimum_size = Vector2(168, 40)
+[node name="GarrisonBox" type="VBoxContainer" parent="Root/BottomPanel/PanelRow"]
+custom_minimum_size = Vector2(170, 0)
 layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = 5
+
+[node name="GarrisonTitle" type="Label" parent="Root/BottomPanel/PanelRow/GarrisonBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.58, 0.61, 0.71, 1)
+theme_override_font_sizes/font_size = 11
+text = "Guarnição"
+
+[node name="GarrisonList" type="HBoxContainer" parent="Root/BottomPanel/PanelRow/GarrisonBox"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="ActionSeparator" type="ColorRect" parent="Root/BottomPanel/PanelRow"]
+custom_minimum_size = Vector2(1, 0)
+layout_mode = 2
+size_flags_vertical = 1
+mouse_filter = 2
+color = Color(0.72, 0.58, 0.3, 0.45)
+
+[node name="ActionsBox" type="VBoxContainer" parent="Root/BottomPanel/PanelRow"]
+custom_minimum_size = Vector2(220, 0)
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="RecruitRow" type="HBoxContainer" parent="Root/BottomPanel/PanelRow/ActionsBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="RecruitA" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/RecruitRow"]
+custom_minimum_size = Vector2(100, 30)
+layout_mode = 2
+size_flags_horizontal = 3
 text = "Recrutar"
 clip_text = true
 
-[node name="RecruitB" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=1233052304]
-custom_minimum_size = Vector2(168, 40)
+[node name="RecruitB" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/RecruitRow"]
+custom_minimum_size = Vector2(100, 30)
 layout_mode = 2
+size_flags_horizontal = 3
 text = "Recrutar"
 clip_text = true
 
-[node name="March" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=484649994]
-custom_minimum_size = Vector2(108, 40)
+[node name="March" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox"]
+custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
 text = "➔ Marchar"
 clip_text = true
 
-[node name="EndTurn" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=462471423]
-custom_minimum_size = Vector2(116, 40)
-layout_mode = 2
-text = "⏳ Turno"
-clip_text = true
-
-[node name="Save" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=818968670]
-custom_minimum_size = Vector2(70, 40)
-layout_mode = 2
-text = "Gravar"
-clip_text = true
-
-[node name="Options" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=543210987]
-custom_minimum_size = Vector2(78, 40)
-layout_mode = 2
-text = "Opções"
-clip_text = true
-
-[node name="Menu" type="Button" parent="Root/BottomStrip/BottomMargin/BottomRow/Actions" unique_id=346457525]
-custom_minimum_size = Vector2(66, 40)
-layout_mode = 2
-text = "Menu"
-clip_text = true
-
-[node name="Hint" type="Label" parent="Root" unique_id=1493101988]
+[node name="EndTurn" type="Button" parent="Root"]
 layout_mode = 0
-anchor_left = 0.0
+anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 18.0
-offset_top = -136.0
-offset_right = -18.0
-offset_bottom = -110.0
-mouse_filter = 2
-theme_override_colors/font_color = Color(1, 0.8352941, 0.5411765, 1)
-theme_override_colors/font_outline_color = Color(0.02, 0.03, 0.05, 0.95)
-theme_override_constants/outline_size = 4
-theme_override_font_sizes/font_size = 13
-horizontal_alignment = 1
-vertical_alignment = 1
+offset_left = -172.0
+offset_top = -80.0
+offset_right = -16.0
+offset_bottom = -16.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "⏳ Turno"
+clip_text = true
 
-[node name="MarchPanel" type="PanelContainer" parent="Root" unique_id=1597063300]
+[node name="MarchPanel" type="PanelContainer" parent="Root"]
 visible = false
 layout_mode = 0
 anchor_left = 0.5
 anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = -150.0
-offset_top = -186.0
-offset_right = 150.0
-offset_bottom = -146.0
+offset_left = -155.0
+offset_top = -192.0
+offset_right = 155.0
+offset_bottom = -142.0
+grow_horizontal = 2
+grow_vertical = 0
 mouse_filter = 0
 
-[node name="MarchBox" type="HBoxContainer" parent="Root/MarchPanel" unique_id=1597063301]
+[node name="MarchBox" type="HBoxContainer" parent="Root/MarchPanel"]
 layout_mode = 2
 mouse_filter = 2
 theme_override_constants/separation = 10
 
-[node name="MarchLabel" type="Label" parent="Root/MarchPanel/MarchBox" unique_id=1597063302]
+[node name="MarchLabel" type="Label" parent="Root/MarchPanel/MarchBox"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.86, 0.88, 0.95, 1)
@@ -269,79 +486,12 @@ theme_override_font_sizes/font_size = 13
 text = "Tropas a marchar"
 vertical_alignment = 1
 
-[node name="MarchCount" type="SpinBox" parent="Root/MarchPanel/MarchBox" unique_id=1597063303]
+[node name="MarchCount" type="SpinBox" parent="Root/MarchPanel/MarchBox"]
 layout_mode = 2
 custom_minimum_size = Vector2(92, 0)
 min_value = 1.0
 max_value = 1.0
 value = 1.0
 
-[node name="OrdersCard" type="PanelContainer" parent="Root" unique_id=1597063290]
-visible = false
-layout_mode = 0
-anchor_top = 0.0
-anchor_bottom = 0.0
-offset_left = 16.0
-offset_top = 64.0
-offset_right = 300.0
-offset_bottom = 64.0
-mouse_filter = 2
-
-[node name="OrdersBox" type="VBoxContainer" parent="Root/OrdersCard" unique_id=1597063291]
-layout_mode = 2
-mouse_filter = 2
-theme_override_constants/separation = 4
-
-[node name="OrdersTitle" type="Label" parent="Root/OrdersCard/OrdersBox" unique_id=1597063292]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.98, 0.83, 0.45, 1)
-theme_override_font_sizes/font_size = 13
-text = ""
-
-[node name="OrdersScroll" type="ScrollContainer" parent="Root/OrdersCard/OrdersBox" unique_id=1597063293]
-layout_mode = 2
-size_flags_vertical = 3
-horizontal_scroll_mode = 0
-
-[node name="OrdersList" type="VBoxContainer" parent="Root/OrdersCard/OrdersBox/OrdersScroll" unique_id=1597063294]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 4
-
-[node name="BattleCard" type="PanelContainer" parent="Root" unique_id=1597063196]
-visible = false
-layout_mode = 0
-anchor_left = 1.0
-anchor_right = 1.0
-anchor_bottom = 0.0
-offset_left = -366.0
-offset_top = 64.0
-offset_right = -16.0
-offset_bottom = 64.0
-mouse_filter = 2
-
-[node name="BattleBox" type="VBoxContainer" parent="Root/BattleCard" unique_id=1597063197]
-layout_mode = 2
-mouse_filter = 2
-theme_override_constants/separation = 3
-
-[node name="BattleTitle" type="Label" parent="Root/BattleCard/BattleBox" unique_id=1597063198]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.98, 0.83, 0.45, 1)
-theme_override_font_sizes/font_size = 13
-text = ""
-autowrap_mode = 2
-
-[node name="BattleScroll" type="ScrollContainer" parent="Root/BattleCard/BattleBox" unique_id=1597063295]
-layout_mode = 2
-size_flags_vertical = 3
-horizontal_scroll_mode = 0
-
-[node name="BattleList" type="VBoxContainer" parent="Root/BattleCard/BattleBox/BattleScroll" unique_id=1597063296]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-
-[node name="SettingsPanel" parent="Root" unique_id=1597063200 instance=ExtResource("2_settings")]
+[node name="SettingsPanel" parent="Root" instance=ExtResource("2_settings")]
 layout_mode = 1

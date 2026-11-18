@@ -6,8 +6,10 @@ conventions the project depends on, and the traps already hit once.
 ## Status
 
 Playable MVP: main menu, procedurally generated 21-province continent, turn
-cycle, recruitment, movement, numeric combat, behaviour-tree bot, HUD with
-battle summary, victory/defeat screen, JSON save/load with auto-save each turn.
+cycle, recruitment, movement, numeric combat, behaviour-tree bot, a Total
+War-style campaign HUD (top bar, province dock, collapsible order queue with
+map arrows and badges, battle report with camera focus, toasts),
+victory/defeat screen, JSON save/load with auto-save each turn.
 The whole UI is localized in Portuguese and English, switchable in-game from a
 settings panel (language + fullscreen) and persisted between runs.
 
@@ -49,7 +51,8 @@ marching the other way — see Balance.
 scenes/ui/main_menu.tscn      main scene; New Game / Continue / Settings / Quit
 scenes/map/map.tscn           gameplay scene: MapView + Bot + HUD instance
 scenes/map/province.tscn      Node2D per province, built at runtime from ProvinceData
-scenes/ui/hud.tscn            top resource bar + bottom selection/action dock
+scenes/ui/hud.tscn            campaign HUD: top bar, order queue, battle report,
+                              bottom province dock, end turn button
 scenes/ui/settings_panel.tscn reusable overlay: language + fullscreen
 shaders/terrain.gdshader      terrain painter: relief, biomes, sea, snow
 scripts/data/balance.gd       every tuning number
@@ -67,10 +70,12 @@ scripts/core/combat_resolver.gd  pure numeric combat
 scripts/core/save_system.gd   JSON save/load, versioning, atomic write
 scripts/ai/bot_controller.gd  BT-driven bot (also used for headless sims)
 scripts/ai/tasks/bt_*.gd      tree leaves: recruit, attack, advance
-scripts/ui/hud.gd             player controller: selection, march, recruit
+scripts/ui/hud.gd             player controller: selection, march, recruit,
+                              order queue, battle report, toast, end-turn pulse
+scripts/ui/ui_icon.gd         UiIcon: procedural glyphs for the HUD (no emoji)
 scripts/ui/main_menu.gd       menu actions
 scripts/ui/settings_panel.gd  settings overlay logic (shared by menu + HUD)
-scripts/ui/ui_style.gd        shared palette and button styleboxes
+scripts/ui/ui_style.gd        shared palette, HUD Theme and button styleboxes
 scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
 scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (20 games)
 ```
@@ -111,6 +116,53 @@ scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (20 games)
   their own `StyleBoxFlat`s.
 - Custom Resources never hold node references (only ids/values), per project
   rules.
+
+## Campaign UI
+
+The campaign screen is a Total War-style overlay: a full-window map, a slim top
+bar, a province dock at the bottom centre and panels on the screen edges.
+
+- **One look**: `UiStyle.hud_theme()` is assigned to `HUD/Root`. Palette, font
+  scale (`FONT_TITLE` 20 / `FONT_BODY` 13 / `FONT_SMALL` 11) and every panel
+  stylebox live in `ui_style.gd`. HUD glyphs are drawn by `UiIcon` (coin,
+  manpower, ether, shield, move, recruit, sword, bow) rather than font glyphs,
+  so they never depend on emoji coverage.
+- **Map fills the window**: `MapView._fit_world()` sets
+  `scale = visible_rect.size / WORLD_SIZE` and `position = 0`; pointer events
+  are converted back with `to_local()`. The project stretches with
+  `canvas_items` + `expand` and the default base size, so a 16:9 window always
+  yields a 1152x648 canvas (720p and 1080p included) and the HUD is tuned to
+  those coordinates once.
+- **Top bar**: faction emblem/name, gold / manpower / faction resource as icon
+  chips whose tooltips show income and upkeep, turn number and phase, and a
+  menu button holding Save / Options / Menu.
+- **Orders** (`OrdersTab` + `OrdersCard`, left edge): one row per queued order
+  (type icon, `origin -> target`, troop count, per-row cancel). The tab shows
+  the count and collapses the card; with no orders only the tab remains.
+  Hovering a row calls `MapView.set_hovered_order()` (thickens the arrow and
+  outlines both endpoints), clicking the row selects the origin.
+- **Map order display**: `MapView` draws one trimmed quadratic arrow per move
+  in the faction colour with the troop count on a badge at the curve midpoint,
+  and a stacked badge left of the army shield for each recruit. Player badges
+  are click targets that cancel that queue index. March mode highlights valid
+  neighbours in gold, dims the rest and draws dashed adjacency hints until the
+  target is picked or Esc cancels.
+- **Draw order on the map**: provinces reach `z_index` 3 when selected, the
+  order overlay is 4, and province name labels are 5 so text stays legible over
+  arrows and badges.
+- **Battle report** (`BattleCard`, right edge): one clickable row per battle
+  with province/attacker/losses/captured-or-held. A row calls
+  `MapView.focus_province()`, a temporary 1.55x zoom (0.30 s in, 0.65 s hold,
+  0.45 s back). `x` dismisses the report.
+- **Toast**: upper-centre, reused for errors and hints, held ~2.6 s then faded.
+  It replaces the old floating bottom hint.
+- **Bottom dock**: province name/type/owner/terrain/income on the left,
+  garrison unit cards in the centre, Recruit/March on the right with disabled
+  reasons in their tooltips. End turn is a separate large button at the bottom
+  right; it pulses while orders are queued or resources are unspent.
+- **Known layout trade-off**: the expanded orders card covers the left slice of
+  the map, so a province sitting there (including the capital) can be hidden
+  until the card is collapsed. The tab keeps the order count visible.
 
 ## Rules implemented
 
@@ -302,6 +354,14 @@ win rate, so always check that column.
   `GameHUD._unhandled_key_input` (Space end turn, M march, Esc cancel, S save,
   R recruit). Never rely on a focused button for a shortcut: a focused button
   would swallow Space.
+- Do not put emoji or dingbat glyphs in HUD labels: the system font renders
+  some as coloured emoji and others as tofu boxes. Map icons and resource chips
+  use `UiIcon` instead; only plain arrows already proven in the theme survive.
+- The MCP game view is embedded in the editor and ignores window resizing
+  (`DisplayServer.window_set_size` / `Window.size`). To inspect the real HUD,
+  set `content_scale_size = Vector2i(1152, 648)` and
+  `content_scale_aspect = CONTENT_SCALE_ASPECT_KEEP` from `game_eval`, then
+  screenshot. Crop with `s = framebuffer_width / 1152`.
 - Hand-written UIDs (`uid://mycustomid`) are rejected: Godot warns and falls
   back to the text path. Use the UID from the generated `.uid` sidecar.
 - A full-rect, left-anchored `MenuMargin` whose child's minimum width exceeds
@@ -327,9 +387,10 @@ win rate, so always check that column.
   `SaveSystem.save_game()` refuses when orders are queued. The HUD disables
   Save for the same reason, so a load always resumes at a clean turn.
 - The Orders and Battle cards are top-anchored and size to their content;
-  `CARD_MAX_HEIGHT_RATIO` caps their scroll areas at 45% of the screen, so long
-  lists scroll instead of pushing the card off-screen. Check both at 1152x648
-  after changing row heights.
+  `CARD_MAX_HEIGHT_RATIO` caps their scroll areas at 40% of the screen, and
+  `_card_list_height()` adds the 4px list separation, so long lists scroll
+  instead of pushing the card off-screen. Check both at 1152x648 after changing
+  row heights.
 - A `PackedInt32Array` fetched from a `Dictionary`/`Array` with `as` is a
   **copy**; mutate the original or write it back. `PackedInt32Array` has no
   `pop_back` (convert to `Array` first).

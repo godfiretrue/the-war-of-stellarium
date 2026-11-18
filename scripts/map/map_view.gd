@@ -3,24 +3,39 @@ extends Node2D
 ## Renders the procedurally generated continent and owns input and selection.
 ##
 ## Layers, bottom to top: terrain shader (relief, biomes, sea), province views
-## (ownership tint, border, icons), overlay (rivers, march routes).
+## (ownership tint, border, icons), overlay (rivers, march routes, orders).
 ## Game rules stay out of this node.
+##
+## The whole map is stretched to the window so no strip of the screen is left
+## uncovered at any resolution. Input is converted back into world space, so
+## province hit-testing keeps matching the painted land.
 
 signal province_clicked(province_id: String)
 signal province_selected(province_id: String)
 
 const PROVINCE_SCENE := preload("res://scenes/map/province.tscn")
 const TERRAIN_SHADER := preload("res://shaders/terrain.gdshader")
+const PLAYER := Balance.PLAYER_FACTION
 const WORLD_SIZE := Vector2(1152, 648)
 const DEEP_SEA := Color(0.03, 0.10, 0.20)
-const ROAD_COLOR := Color(0.95, 0.95, 0.98, 0.28)
 const ROAD_ACTIVE_COLOR := Color(1.0, 0.86, 0.35, 0.80)
-const ROAD_WIDTH := 2.0
+const ARROW_HEAD := 13.0
+const ARROW_TRIM := 36.0
+const BADGE_RADIUS := 9.5
+## Recruit orders sit to the left of the army shield and stack upwards, clear
+## of the castle plate and of the province name below.
+const RECRUIT_BADGE_OFFSET := Vector2(-28, 4)
+const RECRUIT_BADGE_STEP := -20.0
+## Arrows leave from just above the army shield, not from under the name.
+const ARROW_ANCHOR := Vector2(0, -4)
 
 var state: MapState
 var selected_province_id: String = ""
 ## Provinces the player may march into while a move is armed.
 var _march_targets: PackedStringArray = PackedStringArray()
+var _march_origin_id := ""
+## Order currently hovered in the HUD list, so its arrow can light up.
+var _hovered_order: Dictionary = {}
 
 var game: GameState
 var turn_manager: Node
@@ -29,13 +44,24 @@ var _views: Dictionary = {}
 var _hovered_province_id: String = ""
 var _overlay: Node2D
 var _terrain: ColorRect
+var _base_scale := Vector2.ONE
+var _focus_tween: Tween
+## Clickable badge rectangles (world space) for queued player orders.
+var _order_hits: Array = []
 
 
 func _ready() -> void:
-	# Rivers and march routes live on a node above the province views.
+	# The map fills the window at every resolution; the HUD lives in its own
+	# CanvasLayer and is unaffected by this transform.
+	get_viewport().size_changed.connect(_fit_world)
+	_fit_world()
+
+	# Rivers, march hints and order arrows live on a node above the province views.
 	_overlay = Node2D.new()
 	_overlay.name = "Overlay"
-	_overlay.z_index = 1
+	# Above every province view (selected ones reach z_index 3) so a queued
+	# arrow is never hidden by a bright selection border.
+	_overlay.z_index = 4
 	_overlay.draw.connect(_draw_overlay)
 	add_child(_overlay)
 
@@ -54,7 +80,10 @@ func _ready() -> void:
 
 	state = game.map_state
 	_build_terrain()
-	_build_views()
+	# start_game() may already have emitted state_changed, which builds the
+	# views through _rebuild_views(); never build the province set twice.
+	if _views.is_empty():
+		_build_views()
 	_overlay.queue_redraw()
 	_log_map_summary()
 
@@ -63,15 +92,34 @@ func _ready() -> void:
 		select_province(capital.id)
 
 
+## Stretch the world to the whole window. 16:9 resolutions keep the original
+## proportions; other aspect ratios stretch slightly rather than leaving a band
+## of background beside the sea.
+func _fit_world() -> void:
+	var area := get_viewport().get_visible_rect().size
+	if area.x < 2.0 or area.y < 2.0:
+		return
+	if _focus_tween != null:
+		_focus_tween.kill()
+		_focus_tween = null
+	_base_scale = area / WORLD_SIZE
+	scale = _base_scale
+	position = Vector2.ZERO
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if state == null:
 		return
 
 	if event is InputEventMouseMotion:
-		_update_hover((event as InputEventMouseMotion).position)
+		_update_hover(to_local((event as InputEventMouseMotion).position))
 	elif event is InputEventMouseButton:
 		var button_event := event as InputEventMouseButton
 		if button_event.pressed and button_event.button_index == MOUSE_BUTTON_LEFT:
+			var world_point := to_local(button_event.position)
+			if _try_cancel_badge(world_point):
+				get_viewport().set_input_as_handled()
+				return
 			var province_id := province_at(button_event.position)
 			if not province_id.is_empty():
 				province_clicked.emit(province_id)
@@ -81,7 +129,7 @@ func _unhandled_input(event: InputEvent) -> void:
 ## Province id under a viewport-space point, or "" over the sea.
 ## Resolved from the generator's label grid, so it matches the painted land.
 func province_at(point: Vector2) -> String:
-	return state.province_id_at(point)
+	return state.province_id_at(to_local(point))
 
 
 func select_province(province_id: String) -> void:
@@ -104,12 +152,56 @@ func get_view(province_id: String) -> ProvinceView:
 
 ## Gold borders on the provinces the armed army can reach. Passing an empty
 ## list clears the highlight; the HUD calls this when march mode starts/ends.
-func set_march_targets(province_ids: PackedStringArray) -> void:
+func set_march_targets(province_ids: PackedStringArray, origin_id: String = "") -> void:
 	_march_targets = province_ids.duplicate()
+	_march_origin_id = origin_id
+	var active := not _march_targets.is_empty()
 	for view_id: String in _views.keys():
 		var view: ProvinceView = _views[view_id]
-		view.set_march_target(_march_targets.has(view_id))
+		var valid := _march_targets.has(view_id)
+		view.set_march_mode(active, valid)
 	_overlay.queue_redraw()
+
+
+## Highlights the arrow and both provinces of an order hovered in the list.
+func set_hovered_order(order: Dictionary) -> void:
+	_hovered_order = order.duplicate(true) if not order.is_empty() else {}
+	var key := _order_key(_hovered_order)
+	for view_id: String in _views.keys():
+		var view: ProvinceView = _views[view_id]
+		var involved := not key.is_empty() and _view_in_order(view_id)
+		view.set_order_highlight(involved)
+	_overlay.queue_redraw()
+
+
+## Camera focus used by the battle report: a short zoom onto the province that
+## eases back to the full-map view.
+func focus_province(province_id: String) -> void:
+	if state == null:
+		return
+	var province := state.get_province(province_id)
+	if province == null:
+		return
+	select_province(province_id)
+
+	var area := get_viewport().get_visible_rect().size
+	if area.x < 2.0 or area.y < 2.0:
+		return
+	if _focus_tween != null:
+		_focus_tween.kill()
+
+	var target_scale := _base_scale * 1.55
+	var target_pos := Vector2(area.x * 0.5, area.y * 0.45) - province.map_position * target_scale
+	_focus_tween = create_tween()
+	_focus_tween.tween_property(self, "scale", target_scale, 0.30) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_focus_tween.parallel().tween_property(self, "position", target_pos, 0.30) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_focus_tween.tween_interval(0.65)
+	_focus_tween.tween_property(self, "scale", _base_scale, 0.45) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	_focus_tween.parallel().tween_property(self, "position", Vector2.ZERO, 0.45) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 
 
 func refresh_all() -> void:
@@ -119,8 +211,9 @@ func refresh_all() -> void:
 	_overlay.queue_redraw()
 
 
-## The terrain is one full-world rectangle painted by a shader that reads the
-## generator's elevation/moisture image.
+## The terrain is one world-sized rectangle painted by a shader that reads the
+## generator's elevation/moisture image; the MapView transform stretches it to
+## the window.
 func _build_terrain() -> void:
 	if _terrain == null:
 		_terrain = ColorRect.new()
@@ -141,7 +234,8 @@ func _build_terrain() -> void:
 	material.set_shader_parameter("world_size", WORLD_SIZE)
 	_terrain.material = material
 
-	# Window is wider than the world when stretched: keep the edges sea-coloured.
+	# The stretched map covers the window, so this only shows through during the
+	# camera focus animation; keep it the same deep blue as the open sea.
 	var backdrop := get_node_or_null("Background/Fill") as ColorRect
 	if backdrop != null:
 		backdrop.color = DEEP_SEA
@@ -153,7 +247,8 @@ func _build_views() -> void:
 		add_child(view)
 		view.setup(province)
 		# Keep an armed march visible across a state rebuild.
-		view.set_march_target(_march_targets.has(province.id))
+		var valid := _march_targets.has(province.id)
+		view.set_march_mode(not _march_targets.is_empty(), valid)
 		_views[province.id] = view
 
 
@@ -189,8 +284,8 @@ func _on_orders_changed() -> void:
 		_overlay.queue_redraw()
 
 
-func _update_hover(point: Vector2) -> void:
-	var province_id := province_at(point)
+func _update_hover(world_point: Vector2) -> void:
+	var province_id := state.province_id_at(world_point)
 	if province_id == _hovered_province_id:
 		return
 
@@ -205,6 +300,8 @@ func _update_hover(point: Vector2) -> void:
 		if view != null:
 			view.set_hovered(true)
 
+
+# --- Overlay -------------------------------------------------------------
 
 ## Rivers, queued orders and march routes, drawn above the provinces.
 func _draw_overlay() -> void:
@@ -221,60 +318,185 @@ func _draw_overlay() -> void:
 		_overlay.draw_polyline(river, Color(0.55, 0.75, 0.90, 0.26), maxf(width * 0.26, 0.6), true)
 
 	_draw_queued_orders()
-
-	# March routes: only the selected province's links, so the map does not
-	# end up covered in dashed lines.
-	var selected_province := state.get_province(selected_province_id) if not selected_province_id.is_empty() else null
-	if selected_province == null:
-		return
-
-	for neighbor_id: String in selected_province.neighbors:
-		var other := state.get_province(neighbor_id)
-		if other == null:
-			continue
-		var direction := (other.map_position - selected_province.map_position).normalized()
-		var from_point := selected_province.map_position + direction * 34.0
-		var to_point := other.map_position - direction * 34.0
-		if from_point.distance_to(to_point) > 12.0:
-			_overlay.draw_dashed_line(from_point, to_point, ROAD_ACTIVE_COLOR, 2.6, 6.0, true)
+	_draw_march_hints()
 
 
-## One plain arrow per queued march, coloured by the faction that queued it.
+## One curved arrow per queued march, with a troop-count badge at its middle.
+## Recruits get a small badge on the province instead. Only the player's badges
+## are clickable (the bot's orders cannot be cancelled from here).
 func _draw_queued_orders() -> void:
+	_order_hits.clear()
 	if game == null:
 		return
+
+	var recruit_slots: Dictionary = {}
 	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
-		var color := UiStyle.faction_color(faction)
-		color.a = 0.85
-		for order_variant in game.queued_orders_for(faction):
-			var order: Dictionary = order_variant
-			if String(order.get("type", "")) != "move":
-				continue
-			var from_province := state.get_province(String(order.get("from_id", "")))
-			var to_province := state.get_province(String(order.get("to_id", "")))
-			if from_province == null or to_province == null:
-				continue
-			_draw_arrow(from_province.map_position, to_province.map_position, color)
+		var base_color := UiStyle.faction_color(faction)
+		var orders := game.queued_orders_for(faction)
+		for index in orders.size():
+			var order: Dictionary = orders[index]
+			var highlighted := _order_key(order) == _order_key(_hovered_order)
+			var color := Color(base_color)
+			color.a = 1.0 if highlighted else 0.86
+
+			if String(order.get("type", "")) == "move":
+				var from_province := state.get_province(String(order.get("from_id", "")))
+				var to_province := state.get_province(String(order.get("to_id", "")))
+				if from_province == null or to_province == null:
+					continue
+				var badge := _draw_arrow(
+					from_province.map_position + ARROW_ANCHOR,
+					to_province.map_position + ARROW_ANCHOR,
+					color, highlighted
+				)
+				var count := CombatResolver.troop_count(order.get("units", {}))
+				var rect := _draw_badge(badge, count, color, highlighted, BADGE_RADIUS)
+				if faction == PLAYER and not rect.size.is_zero_approx():
+					_order_hits.append({"rect": rect.grow(4.0), "index": index})
+			elif String(order.get("type", "")) == "recruit":
+				var province := state.get_province(String(order.get("province_id", "")))
+				if province == null:
+					continue
+				# Recruits queued in the same province stack upwards instead of
+				# hiding each other.
+				var slot := int(recruit_slots.get(province.id, 0))
+				recruit_slots[province.id] = slot + 1
+				var point := province.map_position + RECRUIT_BADGE_OFFSET \
+					+ Vector2(0, RECRUIT_BADGE_STEP * slot)
+				var count := int(order.get("count", 1))
+				var rect := _draw_badge(point, count, color, highlighted, BADGE_RADIUS - 1.0)
+				if faction == PLAYER and not rect.size.is_zero_approx():
+					_order_hits.append({"rect": rect.grow(4.0), "index": index})
 
 
-func _draw_arrow(from_point: Vector2, to_point: Vector2, color: Color) -> void:
-	var direction := to_point - from_point
-	if direction.length() < 1.0:
+func _draw_march_hints() -> void:
+	if _march_origin_id.is_empty() or _march_targets.is_empty():
 		return
-	direction = direction.normalized()
-	var start := from_point + direction * 34.0
-	var end := to_point - direction * 34.0
-	if start.distance_to(end) < 12.0:
+	var origin := state.get_province(_march_origin_id)
+	if origin == null:
 		return
 
-	_overlay.draw_line(start, end, color, 3.0, true)
+	for target_id: String in _march_targets:
+		var target := state.get_province(target_id)
+		if target == null:
+			continue
+		var direction := (target.map_position - origin.map_position).normalized()
+		var from_point := origin.map_position + direction * 30.0
+		var to_point := target.map_position - direction * 30.0
+		if from_point.distance_to(to_point) > 12.0:
+			_overlay.draw_dashed_line(from_point, to_point, ROAD_ACTIVE_COLOR, 2.4, 7.0, true)
+
+
+## Quadratic curve between two provinces, trimmed so it does not cover the
+## banners, with a triangular head. Returns the curve's midpoint for the badge.
+func _draw_arrow(from_point: Vector2, to_point: Vector2, color: Color, highlighted: bool) -> Vector2:
+	var delta := to_point - from_point
+	if delta.length() < 1.0:
+		return from_point
+
+	var direction := delta.normalized()
 	var side := direction.rotated(PI * 0.5)
-	_overlay.draw_colored_polygon(PackedVector2Array([
-		end,
-		end - direction * 10.0 + side * 5.0,
-		end - direction * 10.0 - side * 5.0,
-	]), color)
+	var span := delta.length()
+	# Adjacent provinces are close together: a wide bow and a short trim keep
+	# the curve visible instead of collapsing into a stub over the border.
+	var bow := clampf(span * 0.30, 22.0, 70.0)
+	var trim := clampf(span * 0.18, 18.0, ARROW_TRIM)
+	var control := (from_point + to_point) * 0.5 + side * bow
 
+	var points := PackedVector2Array()
+	var steps := 24
+	for step in steps + 1:
+		var t := float(step) / float(steps)
+		points.append(_bezier(from_point, control, to_point, t))
+
+	var midpoint := _bezier(from_point, control, to_point, 0.5)
+
+	var start_index := 0
+	while start_index < points.size() - 3 and points[start_index].distance_to(from_point) < trim:
+		start_index += 1
+	var end_index := points.size() - 1
+	while end_index > start_index + 2 and points[end_index].distance_to(to_point) < trim:
+		end_index -= 1
+	if end_index - start_index < 3:
+		return midpoint
+
+	var visible := points.slice(start_index, end_index + 1)
+	var width := 5.6 if highlighted else 4.2
+
+	_overlay.draw_polyline(visible, Color(0.02, 0.03, 0.05, 0.90), width + 3.0, true)
+	_overlay.draw_polyline(visible, color, width, true)
+	# A pale core keeps the arrow readable where the faction colour is close to
+	# the province border colour.
+	_overlay.draw_polyline(visible, color.lerp(Color.WHITE, 0.45), maxf(width * 0.32, 1.0), true)
+
+	var tip := visible[visible.size() - 1]
+	var tangent := (tip - visible[visible.size() - 2]).normalized()
+	var head_side := tangent.rotated(PI * 0.5)
+	_overlay.draw_colored_polygon(PackedVector2Array([
+		tip + tangent * 2.0,
+		tip - tangent * ARROW_HEAD + head_side * 6.5,
+		tip - tangent * ARROW_HEAD - head_side * 6.5,
+	]), color)
+	return midpoint
+
+
+func _draw_badge(center: Vector2, count: int, color: Color, highlighted: bool, radius: float) -> Rect2:
+	_overlay.draw_circle(center, radius + 2.0, Color(0.02, 0.03, 0.05, 0.90))
+	_overlay.draw_circle(center, radius, Color(0.06, 0.08, 0.13, 0.97))
+	_overlay.draw_arc(center, radius, 0.0, TAU, 24, color, 2.0 if not highlighted else 2.8, true)
+
+	var font := ThemeDB.fallback_font
+	var font_size := 11
+	var text := str(count)
+	var text_width := font.get_string_size(
+		text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size
+	).x
+	_overlay.draw_string(
+		font,
+		center + Vector2(-text_width * 0.5, font_size * 0.36),
+		text,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		font_size,
+		Color.WHITE
+	)
+	return Rect2(center - Vector2(radius, radius), Vector2(radius, radius) * 2.0)
+
+
+func _try_cancel_badge(world_point: Vector2) -> bool:
+	if game == null:
+		return false
+	for hit in _order_hits:
+		var rect: Rect2 = hit["rect"]
+		if rect.has_point(world_point):
+			game.cancel_order(PLAYER, int(hit["index"]))
+			return true
+	return false
+
+
+func _order_key(order: Dictionary) -> String:
+	if order.is_empty():
+		return ""
+	return "%s:%s:%s:%s" % [
+		String(order.get("type", "")),
+		String(order.get("from_id", "")),
+		String(order.get("to_id", "")),
+		String(order.get("province_id", "")),
+	]
+
+
+func _view_in_order(province_id: String) -> bool:
+	return province_id == String(_hovered_order.get("from_id", "")) \
+		or province_id == String(_hovered_order.get("to_id", "")) \
+		or province_id == String(_hovered_order.get("province_id", ""))
+
+
+static func _bezier(a: Vector2, control: Vector2, b: Vector2, t: float) -> Vector2:
+	var inverse := 1.0 - t
+	return a * (inverse * inverse) + control * (2.0 * inverse * t) + b * (t * t)
+
+
+# --- Diagnostics ---------------------------------------------------------
 
 func _edge_count() -> int:
 	var total := 0

@@ -11,11 +11,15 @@ extends CanvasLayer
 ## through Loc, so changing the language retranslates the HUD in place.
 
 const PLAYER := Balance.PLAYER_FACTION
-const BATTLE_VISIBLE_SECONDS := 10.0
 ## Cards grow with their content but never past this share of the screen.
-const CARD_MAX_HEIGHT_RATIO := 0.45
-const ORDER_ROW_HEIGHT := 44.0
-const BATTLE_ROW_HEIGHT := 64.0
+const CARD_MAX_HEIGHT_RATIO := 0.40
+const ORDER_ROW_HEIGHT := 40.0
+const BATTLE_ROW_HEIGHT := 74.0
+const TOAST_HOLD_SECONDS := 2.6
+
+const MENU_SAVE := 0
+const MENU_OPTIONS := 1
+const MENU_MAIN := 2
 
 var game: GameState
 var turn_manager: Node
@@ -24,43 +28,61 @@ var map_view: MapView
 var selected_province_id: String = ""
 var march_origin_id: String = ""
 
-var _battle_token := 0
 var _last_battles: Array = []
 var _game_over_winner := -2
 
-@onready var _faction_dot: ColorRect = $Root/TopStrip/TopMargin/TopRow/FactionDot
-@onready var _faction_name: Label = $Root/TopStrip/TopMargin/TopRow/FactionName
-@onready var _gold: Label = $Root/TopStrip/TopMargin/TopRow/Gold
-@onready var _manpower: Label = $Root/TopStrip/TopMargin/TopRow/Manpower
-@onready var _resource: Label = $Root/TopStrip/TopMargin/TopRow/Resource
-@onready var _turn_badge: PanelContainer = $Root/TopStrip/TopMargin/TopRow/TurnBadge
-@onready var _turn: Label = $Root/TopStrip/TopMargin/TopRow/TurnBadge/Turn
-@onready var _accent_bar: ColorRect = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/AccentBar
-@onready var _name: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/ProvinceName
-@onready var _meta: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/ProvinceMeta
-@onready var _troops: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Troops
-@onready var _attack: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Attack
-@onready var _defense: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Defense
-@onready var _income: Label = $Root/BottomStrip/BottomMargin/BottomRow/SelectionCard/InfoBox/StatsRow/Income
-@onready var _recruit_a: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/RecruitA
-@onready var _recruit_b: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/RecruitB
-@onready var _march: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/March
-@onready var _end_turn: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/EndTurn
-@onready var _save: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Save
-@onready var _options: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Options
-@onready var _menu: Button = $Root/BottomStrip/BottomMargin/BottomRow/Actions/Menu
-@onready var _hint: Label = $Root/Hint
-@onready var _march_panel: PanelContainer = $Root/MarchPanel
-@onready var _march_label: Label = $Root/MarchPanel/MarchBox/MarchLabel
-@onready var _march_count: SpinBox = $Root/MarchPanel/MarchBox/MarchCount
+var _orders_collapsed := true
+var _had_orders := false
+var _toast_tween: Tween
+var _pulse_tween: Tween
+var _pulse_hot := false
+
+@onready var _root: Control = $Root
+@onready var _emblem: PanelContainer = $Root/TopBar/TopMargin/TopRow/Emblem
+@onready var _faction_dot: ColorRect = $Root/TopBar/TopMargin/TopRow/Emblem/FactionDot
+@onready var _faction_name: Label = $Root/TopBar/TopMargin/TopRow/FactionName
+@onready var _gold_chip: PanelContainer = $Root/TopBar/TopMargin/TopRow/GoldChip
+@onready var _gold_icon: UiIcon = $Root/TopBar/TopMargin/TopRow/GoldChip/GoldBox/GoldIcon
+@onready var _gold: Label = $Root/TopBar/TopMargin/TopRow/GoldChip/GoldBox/Gold
+@onready var _manpower_chip: PanelContainer = $Root/TopBar/TopMargin/TopRow/ManpowerChip
+@onready var _manpower_icon: UiIcon = $Root/TopBar/TopMargin/TopRow/ManpowerChip/ManpowerBox/ManpowerIcon
+@onready var _manpower: Label = $Root/TopBar/TopMargin/TopRow/ManpowerChip/ManpowerBox/Manpower
+@onready var _resource_chip: PanelContainer = $Root/TopBar/TopMargin/TopRow/ResourceChip
+@onready var _resource_icon: UiIcon = $Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox/ResourceIcon
+@onready var _resource: Label = $Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox/Resource
+@onready var _turn_badge: PanelContainer = $Root/TopBar/TopMargin/TopRow/TurnBadge
+@onready var _turn: Label = $Root/TopBar/TopMargin/TopRow/TurnBadge/Turn
+@onready var _menu_button: Button = $Root/TopBar/TopMargin/TopRow/MenuButton
+@onready var _menu_popup: PopupMenu = $Root/TopBar/MenuPopup
+@onready var _accent_bar: ColorRect = $Root/BottomPanel/PanelRow/AccentBar
+@onready var _name: Label = $Root/BottomPanel/PanelRow/InfoBox/ProvinceName
+@onready var _meta: Label = $Root/BottomPanel/PanelRow/InfoBox/ProvinceMeta
+@onready var _troops: Label = $Root/BottomPanel/PanelRow/InfoBox/StatsRow/Troops
+@onready var _attack: Label = $Root/BottomPanel/PanelRow/InfoBox/StatsRow/Attack
+@onready var _defense: Label = $Root/BottomPanel/PanelRow/InfoBox/StatsRow/Defense
+@onready var _income: Label = $Root/BottomPanel/PanelRow/InfoBox/StatsRow/Income
+@onready var _garrison_title: Label = $Root/BottomPanel/PanelRow/GarrisonBox/GarrisonTitle
+@onready var _garrison_list: HBoxContainer = $Root/BottomPanel/PanelRow/GarrisonBox/GarrisonList
+@onready var _recruit_a: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitA
+@onready var _recruit_b: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitB
+@onready var _march: Button = $Root/BottomPanel/PanelRow/ActionsBox/March
+@onready var _end_turn: Button = $Root/EndTurn
+@onready var _orders_tab: Button = $Root/OrdersTab
 @onready var _orders_card: PanelContainer = $Root/OrdersCard
-@onready var _orders_title: Label = $Root/OrdersCard/OrdersBox/OrdersTitle
+@onready var _orders_title: Label = $Root/OrdersCard/OrdersBox/OrdersHeader/OrdersTitle
+@onready var _orders_collapse: Button = $Root/OrdersCard/OrdersBox/OrdersHeader/OrdersCollapse
 @onready var _orders_scroll: ScrollContainer = $Root/OrdersCard/OrdersBox/OrdersScroll
 @onready var _orders_list: VBoxContainer = $Root/OrdersCard/OrdersBox/OrdersScroll/OrdersList
 @onready var _battle_card: PanelContainer = $Root/BattleCard
-@onready var _battle_title: Label = $Root/BattleCard/BattleBox/BattleTitle
+@onready var _battle_title: Label = $Root/BattleCard/BattleBox/BattleHeader/BattleTitle
+@onready var _battle_dismiss: Button = $Root/BattleCard/BattleBox/BattleHeader/BattleDismiss
 @onready var _battle_scroll: ScrollContainer = $Root/BattleCard/BattleBox/BattleScroll
 @onready var _battle_list: VBoxContainer = $Root/BattleCard/BattleBox/BattleScroll/BattleList
+@onready var _toast: PanelContainer = $Root/Toast
+@onready var _toast_label: Label = $Root/Toast/ToastLabel
+@onready var _march_panel: PanelContainer = $Root/MarchPanel
+@onready var _march_label: Label = $Root/MarchPanel/MarchBox/MarchLabel
+@onready var _march_count: SpinBox = $Root/MarchPanel/MarchBox/MarchCount
 @onready var _settings_panel: SettingsPanel = $Root/SettingsPanel
 @onready var _settings: GameSettings = get_node("/root/Settings")
 
@@ -76,9 +98,13 @@ func _ready() -> void:
 
 	_style()
 	_connect_signals()
+	_build_menu()
 
 	_battle_card.visible = false
-	_hint.text = ""
+	_orders_card.visible = false
+	_toast.visible = false
+	_orders_collapsed = true
+	_pulse_hot = false
 
 	if game.map_state != null:
 		var capital := game.map_state.capital_of(PLAYER)
@@ -100,47 +126,125 @@ func _connect_signals() -> void:
 
 	if map_view != null:
 		map_view.province_clicked.connect(_on_map_clicked)
+		map_view.province_selected.connect(_on_map_selection)
 
 	_recruit_a.pressed.connect(_on_recruit.bind(0))
 	_recruit_b.pressed.connect(_on_recruit.bind(1))
 	_march.pressed.connect(_on_march_pressed)
 	_end_turn.pressed.connect(_on_end_turn_pressed)
-	_save.pressed.connect(_on_save_pressed)
-	_options.pressed.connect(_open_settings)
-	_menu.pressed.connect(_on_menu_pressed)
+	_menu_button.pressed.connect(_open_menu)
+	_menu_popup.id_pressed.connect(_on_menu_id)
+	_orders_tab.pressed.connect(_toggle_orders)
+	_orders_collapse.pressed.connect(_toggle_orders)
+	_battle_dismiss.pressed.connect(_dismiss_battles)
 	_settings_panel.closed.connect(_on_settings_closed)
+	_end_turn.resized.connect(_on_end_turn_resized)
 
 
 # --- Look ----------------------------------------------------------------
 
 func _style() -> void:
+	_root.theme = UiStyle.hud_theme()
+
+	var emblem_box := UiStyle.flat(Color(0.08, 0.09, 0.14, 0.95), UiStyle.GOLD_TRIM, 4)
+	emblem_box.set_content_margin_all(6.0)
+	_emblem.add_theme_stylebox_override("panel", emblem_box)
 	_faction_dot.color = UiStyle.HUMAN
 	_faction_name.add_theme_color_override("font_color", UiStyle.TEXT)
 	_faction_name.text = Loc.faction_name(PLAYER)
 
-	_pill(_gold, Color(0.91, 0.77, 0.42))
-	_pill(_manpower, Color(0.56, 0.78, 0.91))
-	_pill(_resource, Color(0.79, 0.65, 0.91))
+	var chips: Array[PanelContainer] = [_gold_chip, _manpower_chip, _resource_chip]
+	var accents: Array[Color] = [
+		Color(0.91, 0.77, 0.42), Color(0.56, 0.78, 0.91), Color(0.79, 0.65, 0.91),
+	]
+	for index in chips.size():
+		chips[index].add_theme_stylebox_override(
+			"panel", UiStyle.capsule(Color(0.07, 0.08, 0.13, 0.85), Color(accents[index], 0.40))
+		)
+	_gold_icon.kind = UiIcon.Kind.COIN
+	_gold_icon.tint = accents[0]
+	_manpower_icon.kind = UiIcon.Kind.MANPOWER
+	_manpower_icon.tint = accents[1]
+	_resource_icon.kind = UiIcon.Kind.ETHER
+	_resource_icon.tint = accents[2]
 	_turn.add_theme_color_override("font_color", UiStyle.GOLD)
 
 	UiStyle.apply_hud_button(_recruit_a)
 	UiStyle.apply_hud_button(_recruit_b)
 	UiStyle.apply_hud_button(_march)
 	UiStyle.apply_primary_button(_end_turn)
-	UiStyle.apply_ghost_button(_save)
-	UiStyle.apply_ghost_button(_options)
-	UiStyle.apply_ghost_button(_menu)
+	UiStyle.apply_ghost_button(_menu_button)
+	UiStyle.apply_ghost_button(_orders_collapse)
+	UiStyle.apply_ghost_button(_battle_dismiss)
+	UiStyle.apply_tab_button(_orders_tab)
+	_menu_button.add_theme_font_size_override("font_size", 16)
 
-	_battle_card.add_theme_stylebox_override("panel", UiStyle.panel_box())
-	_orders_card.add_theme_stylebox_override("panel", UiStyle.panel_box())
-	_orders_card.visible = false
+	_orders_card.add_theme_stylebox_override("panel", UiStyle.hud_panel())
+	_battle_card.add_theme_stylebox_override("panel", UiStyle.hud_panel())
+	_march_panel.add_theme_stylebox_override("panel", UiStyle.hud_panel())
+
+	var toast_box := UiStyle.flat(Color(0.030, 0.038, 0.065, 0.97), UiStyle.GOLD_TRIM, 6)
+	toast_box.set_border_width_all(1)
+	toast_box.set_content_margin_all(8.0)
+	toast_box.content_margin_left = 18.0
+	toast_box.content_margin_right = 18.0
+	_toast.add_theme_stylebox_override("panel", toast_box)
 
 
-func _pill(label: Label, accent: Color) -> void:
-	label.add_theme_stylebox_override(
-		"normal", UiStyle.capsule(Color(0.07, 0.08, 0.13, 0.85), Color(accent, 0.35))
-	)
-	label.add_theme_constant_override("outline_size", 0)
+func _on_end_turn_resized() -> void:
+	_end_turn.pivot_offset = _end_turn.size * 0.5
+
+
+func _build_menu() -> void:
+	_menu_popup.add_item(Loc.t("save"), MENU_SAVE)
+	_menu_popup.add_item(Loc.t("options"), MENU_OPTIONS)
+	_menu_popup.add_item(Loc.t("menu"), MENU_MAIN)
+	_refresh_menu()
+
+
+func _refresh_menu() -> void:
+	_menu_popup.set_item_text(MENU_SAVE, Loc.t("save"))
+	_menu_popup.set_item_text(MENU_OPTIONS, Loc.t("options"))
+	_menu_popup.set_item_text(MENU_MAIN, Loc.t("menu"))
+	var can_save: bool = turn_manager.is_player_planning() and not game.has_queued_orders()
+	_menu_popup.set_item_disabled(MENU_SAVE, not can_save)
+	_menu_button.tooltip_text = Loc.t("tip_menu_button")
+
+
+func _open_menu() -> void:
+	_refresh_menu()
+	_menu_popup.reset_size()
+	var pos := _menu_button.global_position + Vector2(0, _menu_button.size.y + 4)
+	_menu_popup.position = Vector2i(pos)
+	_menu_popup.popup()
+
+
+func _on_menu_id(id: int) -> void:
+	match id:
+		MENU_SAVE:
+			_on_save_pressed()
+		MENU_OPTIONS:
+			_open_settings()
+		MENU_MAIN:
+			_on_menu_pressed()
+
+
+# --- Toast ---------------------------------------------------------------
+
+## Small upper-centre message used for every hint and every rules error.
+func _show_toast(text: String) -> void:
+	if text.is_empty():
+		return
+	_toast_label.text = text
+	_toast.visible = true
+	if _toast_tween != null:
+		_toast_tween.kill()
+	_toast.modulate.a = 0.0
+	_toast_tween = create_tween()
+	_toast_tween.tween_property(_toast, "modulate:a", 1.0, 0.16)
+	_toast_tween.tween_interval(TOAST_HOLD_SECONDS)
+	_toast_tween.tween_property(_toast, "modulate:a", 0.0, 0.35)
+	_toast_tween.tween_callback(func() -> void: _toast.visible = false)
 
 
 # --- Refresh -------------------------------------------------------------
@@ -149,12 +253,7 @@ func _refresh() -> void:
 	if game == null or game.map_state == null:
 		return
 
-	_gold.text = "🪙 %d" % game.get_gold(PLAYER)
-	_manpower.text = "👥 %d" % game.get_manpower(PLAYER)
-
-	var key := game.faction_resource_key(PLAYER)
-	_resource.text = "✦ %d %s" % [game.get_resource(PLAYER, key), Loc.resource_name(key)]
-
+	_refresh_economy()
 	_turn.text = Loc.t("turn_badge", [turn_manager.turn_number, Loc.phase_short(turn_manager.phase)])
 	_style_turn_badge()
 
@@ -162,6 +261,32 @@ func _refresh() -> void:
 	_refresh_selection()
 	_refresh_buttons()
 	_refresh_orders()
+	_refresh_menu()
+	_update_end_turn_pulse()
+
+
+func _refresh_economy() -> void:
+	_gold.text = str(game.get_gold(PLAYER))
+	_manpower.text = str(game.get_manpower(PLAYER))
+
+	var key := game.faction_resource_key(PLAYER)
+	var resource_value := game.get_resource(PLAYER, key)
+	_resource.text = "%d %s" % [resource_value, Loc.resource_name(key)]
+
+	var income := game.income_for(PLAYER)
+	var upkeep := game.upkeep_for(PLAYER)
+	var resources: Dictionary = income.get("resources", {})
+	var resource_income := int(resources.get(key, 0))
+
+	_gold_chip.tooltip_text = Loc.t("tip_gold", [
+		game.get_gold(PLAYER), int(income.get("gold", 0)), upkeep,
+	])
+	_manpower_chip.tooltip_text = Loc.t("tip_manpower", [
+		game.get_manpower(PLAYER), int(income.get("manpower", 0)),
+	])
+	_resource_chip.tooltip_text = Loc.t("tip_resource", [
+		Loc.resource_name(key), resource_value, resource_income,
+	])
 
 
 ## Button labels and tooltips that do not depend on the selection.
@@ -169,16 +294,13 @@ func _refresh_static_text() -> void:
 	_faction_name.text = Loc.faction_name(PLAYER)
 	_march.text = Loc.t("march")
 	_end_turn.text = Loc.t("end_turn")
-	_save.text = Loc.t("save")
-	_options.text = Loc.t("options")
-	_menu.text = Loc.t("menu")
 
 	_orders_title.text = Loc.t("orders_title")
-	_march.tooltip_text = Loc.t("tip_march")
-	_end_turn.tooltip_text = Loc.t("tip_end_turn")
-	_save.tooltip_text = Loc.t("tip_save")
-	_options.tooltip_text = Loc.t("tip_options")
-	_menu.tooltip_text = Loc.t("tip_menu")
+	_garrison_title.text = Loc.t("garrison_title")
+	_march_label.text = Loc.t("march_troops")
+	_orders_tab.tooltip_text = Loc.t("tip_orders_toggle")
+	_orders_collapse.tooltip_text = Loc.t("tip_orders_collapse")
+	_battle_dismiss.tooltip_text = Loc.t("close")
 
 
 func _style_turn_badge() -> void:
@@ -204,6 +326,7 @@ func _refresh_selection() -> void:
 		_name.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
 		_meta.text = ""
 		_clear_stats()
+		_refresh_garrison(null)
 		return
 
 	var faction_color := UiStyle.faction_color(province.owner_faction)
@@ -219,17 +342,18 @@ func _refresh_selection() -> void:
 	_name.add_theme_color_override(
 		"font_color", UiStyle.GOLD if province.is_capital else UiStyle.TEXT
 	)
-	_meta.text = "%s · %s · %s" % [
+	_meta.text = "%s · %s · %s · %s" % [
 		role,
 		Loc.territory_type(province.territory_type),
 		Loc.faction_name(province.owner_faction),
+		Loc.terrain_name(province.terrain),
 	]
 	if province.unrest_turns > 0:
 		_meta.text += " · " + Loc.t("unrest", [province.unrest_turns])
 
 	var troops := province.total_troops()
 	var militia := province.home_guard if Balance.HOME_GUARD_ENABLED else 0
-	_troops.text = "⚔ " + (Loc.t("troops", [troops]) if troops > 0 else Loc.t("troops_none"))
+	_troops.text = Loc.t("troops", [troops]) if troops > 0 else Loc.t("troops_none")
 	if militia > 0:
 		_troops.text += " · " + Loc.t("militia", [militia])
 	_troops.add_theme_color_override(
@@ -250,6 +374,98 @@ func _refresh_selection() -> void:
 			province.resource_per_turn, Loc.resource_name(province.resource_type)
 		])
 
+	_refresh_garrison(province)
+
+
+## Garrison as small unit cards (icon tile + count) instead of one text line.
+func _refresh_garrison(province: ProvinceData) -> void:
+	for child in _garrison_list.get_children():
+		_garrison_list.remove_child(child)
+		child.queue_free()
+
+	if province == null:
+		_add_garrison_empty()
+		return
+
+	var total := province.total_troops()
+	_garrison_title.text = Loc.t("garrison_title")
+	if total > 0:
+		_garrison_title.text = "%s · %d" % [Loc.t("garrison_title"), total]
+
+	for unit_id: String in province.garrison.keys():
+		var count := int(province.garrison[unit_id])
+		if count <= 0:
+			continue
+		var unit := UnitCatalog.get_unit(unit_id)
+		var unit_color := UiStyle.faction_color(province.owner_faction)
+		if unit != null:
+			unit_color = unit_color.lerp(UiStyle.GOLD, 0.15)
+		var tooltip := "%s × %d" % [Loc.unit_name(unit_id), count]
+		if unit != null:
+			tooltip = "%s\n%s %d · %s %d" % [
+				Loc.t("garrison_unit_line", [Loc.unit_name(unit_id), count]),
+				Loc.t("stat_attack"), int(unit.attack),
+				Loc.t("stat_defense"), int(unit.defense),
+			]
+		_garrison_list.add_child(_unit_card(
+			unit_color, count, tooltip, _unit_icon_kind(unit_id)
+		))
+
+	if province.home_guard > 0 and Balance.HOME_GUARD_ENABLED:
+		_garrison_list.add_child(_unit_card(
+			UiStyle.GOLD, province.home_guard,
+			Loc.t("garrison_militia", [province.home_guard]), UiIcon.Kind.SHIELD
+		))
+
+	if _garrison_list.get_child_count() == 0:
+		_add_garrison_empty()
+
+
+func _add_garrison_empty() -> void:
+	var label := Label.new()
+	label.text = Loc.t("garrison_empty")
+	label.add_theme_font_size_override("font_size", UiStyle.FONT_SMALL)
+	label.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_garrison_list.add_child(label)
+
+
+func _unit_card(color: Color, count: int, tooltip: String, kind: int = UiIcon.Kind.SHIELD) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(52, 46)
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	card.tooltip_text = tooltip
+	card.add_theme_stylebox_override("panel", UiStyle.unit_card_box(PLAYER))
+
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 6)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(row)
+
+	var icon := UiIcon.new()
+	icon.custom_minimum_size = Vector2(14, 14)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	icon.kind = kind
+	icon.tint = color
+	row.add_child(icon)
+
+	var label := Label.new()
+	label.text = str(count)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", UiStyle.FONT_BODY)
+	label.add_theme_color_override("font_color", UiStyle.TEXT)
+	row.add_child(label)
+	return card
+
+
+## Melee and ranged units get their own glyph so a garrison reads at a glance.
+func _unit_icon_kind(unit_id: String) -> int:
+	if unit_id.contains("sword") or unit_id.contains("boar"):
+		return UiIcon.Kind.SWORD
+	return UiIcon.Kind.BOW
+
 
 func _clear_stats() -> void:
 	_troops.text = ""
@@ -262,13 +478,12 @@ func _refresh_buttons() -> void:
 	var player_planning: bool = turn_manager.is_player_planning()
 	_end_turn.disabled = not player_planning
 
-	# Saves are only allowed at the start of a turn, before any order is queued.
-	_save.disabled = not player_planning or game.has_queued_orders()
-
 	var province := _selected_province()
 	var owned: bool = province != null and province.is_owned_by(PLAYER)
 	var can_march := player_planning and owned and province.total_troops() > 0
 	_march.disabled = not can_march
+	_march.tooltip_text = _march_reason(player_planning, province, owned)
+
 	# March is the expected next step while a move is armed; otherwise ending the
 	# turn is. Only one of them wears the gold primary style at a time.
 	if march_origin_id.is_empty():
@@ -309,9 +524,21 @@ func _refresh_buttons() -> void:
 		if province == null:
 			button.text = "+ %s" % Loc.unit_name(unit_id)
 			button.disabled = true
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text, Loc.t("reason_no_selection"),
+			]
 		elif not owned:
 			button.text = "+ %s" % Loc.unit_name(unit_id)
 			button.disabled = true
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text, Loc.t("reason_not_owned"),
+			]
+		elif not player_planning:
+			button.text = "+ %s" % Loc.unit_name(unit_id)
+			button.disabled = true
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text, Loc.t("reason_not_planning"),
+			]
 		elif not is_city_province:
 			# Corridors cannot recruit; show the unit but explain why it is off.
 			button.text = "+ %s" % Loc.unit_name(unit_id)
@@ -327,9 +554,10 @@ func _refresh_buttons() -> void:
 				button.tooltip_text, Loc.t("recruit_unrest", [province.unrest_turns]),
 			]
 		else:
-			button.text = Loc.t("recruit", [
-				Loc.unit_name(unit_id), gold_cost, manpower_cost,
-			])
+			button.text = Loc.t("recruit_short", [Loc.unit_name(unit_id)])
+			button.tooltip_text = "%s\n%s" % [
+				button.tooltip_text, Loc.t("recruit_cost", [gold_cost, manpower_cost]),
+			]
 			var affordable := game.can_afford(PLAYER, gold_cost, manpower_cost)
 			button.disabled = not (can_recruit_base and affordable)
 			if not affordable:
@@ -338,18 +566,63 @@ func _refresh_buttons() -> void:
 				]
 
 
+func _march_reason(player_planning: bool, province: ProvinceData, owned: bool) -> String:
+	if not player_planning:
+		return Loc.t("reason_not_planning")
+	if province == null:
+		return Loc.t("reason_no_selection")
+	if not owned:
+		return Loc.t("reason_not_owned")
+	if province.total_troops() <= 0:
+		return Loc.t("hint_no_troops")
+	return Loc.t("tip_march")
+
+
+## Gentle pulse while the player still has orders queued or affordable troops
+## waiting to be recruited; completely still otherwise.
+func _update_end_turn_pulse() -> void:
+	var hot: bool = turn_manager.is_player_planning() and (
+		not game.queued_orders_for(PLAYER).is_empty() or _can_recruit_anything()
+	)
+	if hot == _pulse_hot:
+		return
+	_pulse_hot = hot
+
+	if _pulse_tween != null:
+		_pulse_tween.kill()
+		_pulse_tween = null
+	_end_turn.scale = Vector2.ONE
+	_end_turn.modulate = Color.WHITE
+	if not hot:
+		return
+
+	_on_end_turn_resized()
+	_pulse_tween = create_tween().set_loops()
+	_pulse_tween.tween_property(_end_turn, "scale", Vector2(1.035, 1.035), 1.0) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_pulse_tween.parallel().tween_property(_end_turn, "modulate", Color(1.06, 1.06, 1.06), 1.0)
+	_pulse_tween.tween_property(_end_turn, "scale", Vector2.ONE, 1.0) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_pulse_tween.parallel().tween_property(_end_turn, "modulate", Color.WHITE, 1.0)
+
+
+func _can_recruit_anything() -> bool:
+	for unit_id: String in UnitCatalog.units_for_faction(PLAYER):
+		var costs := game.recruit_costs(PLAYER, unit_id)
+		if game.can_afford(PLAYER, int(costs["gold"]), int(costs["manpower"])):
+			return true
+	return false
+
+
 func _retranslate() -> void:
 	# The language lives in Settings; re-render everything that carries text.
 	if game == null:
 		return
 	_faction_name.text = Loc.faction_name(PLAYER)
 	_refresh()
-	# Re-render the battle list only while it is still on screen; a language
-	# change must not resurrect one that already timed out.
+	_refresh_menu()
 	if _battle_card.visible and not _last_battles.is_empty():
-		_render_battles(false)
-	if _march_panel.visible:
-		_march_label.text = Loc.t("march_troops")
+		_render_battles()
 
 
 # --- Player actions ------------------------------------------------------
@@ -363,13 +636,14 @@ func _on_recruit(index: int) -> void:
 		return
 
 	var result := game.queue_recruit(PLAYER, selected_province_id, unit_ids[index], 1)
-	_hint.text = "" if result.get("ok", false) else Loc.reason(String(result.get("reason", "")))
+	if not bool(result.get("ok", false)):
+		_show_toast(Loc.reason(String(result.get("reason", ""))))
 	_refresh()
 
 
 func _on_march_pressed() -> void:
 	if not turn_manager.is_player_planning():
-		_hint.text = Loc.t("hint_bot_turn")
+		_show_toast(Loc.t("hint_bot_turn"))
 		return
 
 	if not march_origin_id.is_empty():
@@ -380,14 +654,14 @@ func _on_march_pressed() -> void:
 	if province == null or not province.is_owned_by(PLAYER):
 		return
 	if province.total_troops() <= 0:
-		_hint.text = Loc.t("hint_no_troops")
+		_show_toast(Loc.t("hint_no_troops"))
 		return
 
 	march_origin_id = selected_province_id
-	_hint.text = Loc.t("hint_march")
+	_show_toast(Loc.t("hint_march"))
 	_open_march_panel(province.total_troops())
 	if map_view != null:
-		map_view.set_march_targets(PackedStringArray(province.neighbors))
+		map_view.set_march_targets(PackedStringArray(province.neighbors), province.id)
 	_refresh_buttons()
 
 
@@ -395,23 +669,20 @@ func _on_end_turn_pressed() -> void:
 	if not turn_manager.is_player_planning():
 		return
 	_cancel_march()
-	_hint.text = ""
-	_battle_card.visible = false
-	_battle_token += 1
+	_dismiss_battles()
 	turn_manager.end_player_turn()
 
 
 func _on_save_pressed() -> void:
 	if not turn_manager.is_player_planning() or game.has_queued_orders():
-		_hint.text = Loc.t("save_turn_start_only")
+		_show_toast(Loc.t("save_turn_start_only"))
 		return
 	var saved := SaveSystem.save_game(game, turn_manager.turn_number)
-	_hint.text = Loc.t("saved") if saved else Loc.t("save_failed")
+	_show_toast(Loc.t("saved") if saved else Loc.t("save_failed"))
 
 
 func _open_settings() -> void:
 	_cancel_march()
-	_hint.text = ""
 	_settings_panel.open()
 
 
@@ -436,6 +707,15 @@ func _on_map_clicked(province_id: String) -> void:
 		_select(province_id)
 
 
+## Keeps the panel in sync when the map selects a province on its own (capital
+## on load, battle-report focus).
+func _on_map_selection(province_id: String) -> void:
+	if selected_province_id == province_id:
+		return
+	selected_province_id = province_id
+	_refresh()
+
+
 func _handle_march_click(target_id: String) -> void:
 	var origin_id := march_origin_id
 	var map := game.map_state
@@ -446,7 +726,7 @@ func _handle_march_click(target_id: String) -> void:
 
 	if not map.are_adjacent(origin_id, target_id):
 		_cancel_march()
-		_hint.text = Loc.t("hint_not_neighbor")
+		_show_toast(Loc.t("hint_not_neighbor"))
 		_select(target_id)
 		return
 
@@ -456,11 +736,11 @@ func _handle_march_click(target_id: String) -> void:
 	_cancel_march()
 
 	if not bool(result.get("ok", false)):
-		_hint.text = Loc.reason(String(result.get("reason", "")))
+		_show_toast(Loc.reason(String(result.get("reason", ""))))
 		_refresh()
 		return
 
-	_hint.text = Loc.t("hint_order_queued")
+	_show_toast(Loc.t("hint_order_queued"))
 	_select(origin_id)
 
 
@@ -531,7 +811,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_ESCAPE:
 			if not march_origin_id.is_empty():
 				_cancel_march()
-				_hint.text = ""
 		KEY_S:
 			_on_save_pressed()
 		KEY_R:
@@ -545,15 +824,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _on_phase_changed(_phase: int) -> void:
 	if turn_manager.is_player_planning():
-		# Clear the wait message when control comes back; leave other feedback
-		# (save result, recruit errors) alone.
-		if _hint.text == Loc.t("hint_bot_turn"):
-			_hint.text = ""
-	else:
+		# Only bot planning needs a message; resolution blinks past.
+		pass
+	elif turn_manager.is_bot_planning():
+		_show_toast(Loc.t("hint_bot_turn"))
 		_cancel_march()
-		# Only bot planning needs the message; resolution blinks past.
-		if turn_manager.is_bot_planning():
-			_hint.text = Loc.t("hint_bot_turn")
 	_refresh()
 
 
@@ -562,12 +837,12 @@ func _on_resolution_finished(summary: Dictionary) -> void:
 	if _last_battles.is_empty():
 		_battle_card.visible = false
 		return
-	_render_battles(true)
+	_render_battles()
 
 
-## Renders every battle of the turn in one scrollable card. `reset_timer` is
-## false on a language change so the existing timeout keeps running.
-func _render_battles(reset_timer: bool) -> void:
+## Renders every battle of the turn in one scrollable panel. Rows stay until
+## dismissed or a new turn is ended, so the report can be read at leisure.
+func _render_battles() -> void:
 	for child in _battle_list.get_children():
 		_battle_list.remove_child(child)
 		child.queue_free()
@@ -576,30 +851,67 @@ func _render_battles(reset_timer: bool) -> void:
 	_battle_scroll.custom_minimum_size.y = _card_list_height(_last_battles.size(), BATTLE_ROW_HEIGHT)
 	for result_variant in _last_battles:
 		var result: Dictionary = result_variant
-		var label := Label.new()
-		label.text = _battle_text(result)
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.add_theme_font_size_override("font_size", 11)
-		label.add_theme_color_override("font_color", UiStyle.TEXT)
-		_battle_list.add_child(label)
+		var row := PanelContainer.new()
+		row.custom_minimum_size = Vector2(0, BATTLE_ROW_HEIGHT)
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
+		row.tooltip_text = Loc.t("battle_focus_tip")
+		row.add_theme_stylebox_override("panel", UiStyle.row_box())
+
+		var column := VBoxContainer.new()
+		column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		column.add_theme_constant_override("separation", 1)
+		row.add_child(column)
+
+		var lines := _battle_text(result).split("\n")
+		for index in lines.size():
+			var label := Label.new()
+			label.text = lines[index]
+			label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			label.add_theme_font_size_override(
+				"font_size", UiStyle.FONT_BODY if index == 0 else UiStyle.FONT_SMALL
+			)
+			var color := UiStyle.TEXT
+			if index == 1:
+				color = UiStyle.TEXT_DIM
+			elif index >= 2:
+				color = UiStyle.GOLD if bool(result.get("captured", false)) else UiStyle.TEXT_DIM
+			label.add_theme_color_override("font_color", color)
+			column.add_child(label)
+
+		row.gui_input.connect(_on_battle_row_input.bind(result))
+		row.mouse_entered.connect(_on_battle_row_hover.bind(row, true))
+		row.mouse_exited.connect(_on_battle_row_hover.bind(row, false))
+		_battle_list.add_child(row)
 
 	_battle_card.visible = true
 	_battle_card.modulate.a = 1.0
-	if not reset_timer:
-		return
 
-	# Only the newest summary may hide the card; an older timer is cancelled by
-	# comparing the token it captured.
-	_battle_token += 1
-	var token := _battle_token
-	var tween := create_tween()
-	tween.tween_interval(BATTLE_VISIBLE_SECONDS)
-	tween.tween_property(_battle_card, "modulate:a", 0.0, 0.6)
-	tween.tween_callback(
-		func() -> void:
-			if token == _battle_token:
-				_battle_card.visible = false
+
+func _on_battle_row_hover(row: PanelContainer, hovered: bool) -> void:
+	row.add_theme_stylebox_override(
+		"panel", UiStyle.row_hover_box() if hovered else UiStyle.row_box()
 	)
+
+
+func _on_battle_row_input(event: InputEvent, result: Dictionary) -> void:
+	if event is not InputEventMouseButton:
+		return
+	var button_event := event as InputEventMouseButton
+	if not button_event.pressed or button_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var province_id := String(result.get("province_id", ""))
+	if province_id.is_empty():
+		province_id = String(result.get("to_id", ""))
+	if province_id.is_empty():
+		return
+	if map_view != null:
+		map_view.focus_province(province_id)
+	_select(province_id)
+
+
+func _dismiss_battles() -> void:
+	_battle_card.visible = false
 
 
 func _battle_text(result: Dictionary) -> String:
@@ -610,7 +922,11 @@ func _battle_text(result: Dictionary) -> String:
 	])
 
 	if bool(result.get("swap", false)):
-		return "%s — %s" % [Loc.t("battle_swap_line", [from_name, to_name]), losses]
+		return "%s\n%s\n%s" % [
+			Loc.t("battle_swap_line", [from_name, to_name]),
+			losses,
+			Loc.t("battle_captured") if bool(result.get("captured", false)) else Loc.t("battle_held"),
+		]
 
 	var title := Loc.t("battle_field", [String(result.get("province_name", "?"))])
 	var province := _province(String(result.get("province_id", "")))
@@ -640,43 +956,148 @@ func _refresh_orders() -> void:
 	for child in _orders_list.get_children():
 		_orders_list.remove_child(child)
 		child.queue_free()
+	if map_view != null:
+		map_view.set_hovered_order({})
 
 	var orders := game.queued_orders_for(PLAYER)
-	_orders_card.visible = not orders.is_empty()
+
+	if not orders.is_empty() and not _had_orders:
+		_orders_collapsed = false
 	if orders.is_empty():
-		return
+		_orders_collapsed = true
+	_had_orders = not orders.is_empty()
 
 	for index in orders.size():
 		var order: Dictionary = orders[index]
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
+		_orders_list.add_child(_order_row(order, index))
 
-		var label := Label.new()
-		label.text = _order_text(order)
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.add_theme_font_size_override("font_size", 11)
-		label.add_theme_color_override("font_color", UiStyle.TEXT)
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(label)
+	if not orders.is_empty():
+		_orders_scroll.custom_minimum_size.y = _card_list_height(orders.size(), ORDER_ROW_HEIGHT)
 
-		var cancel := Button.new()
-		cancel.text = Loc.t("cancel")
-		cancel.custom_minimum_size = Vector2(58, 24)
-		cancel.add_theme_font_size_override("font_size", 11)
-		UiStyle.apply_hud_button(cancel)
-		cancel.pressed.connect(_on_cancel_order.bind(index))
-		row.add_child(cancel)
+	_update_orders_visibility()
 
-		_orders_list.add_child(row)
 
-	_orders_scroll.custom_minimum_size.y = _card_list_height(orders.size(), ORDER_ROW_HEIGHT)
+func _update_orders_visibility() -> void:
+	var count := game.queued_orders_for(PLAYER).size()
+	if count == 0:
+		_orders_tab.text = Loc.t("orders_tab_empty")
+	else:
+		_orders_tab.text = Loc.t("orders_tab", [count])
+	_orders_card.visible = count > 0 and not _orders_collapsed
+	_orders_tab.text = ("▾ " if _orders_card.visible else "▸ ") + _orders_tab.text
+
+
+func _toggle_orders() -> void:
+	var count := game.queued_orders_for(PLAYER).size()
+	if count == 0:
+		_show_toast(Loc.t("orders_empty"))
+		_orders_collapsed = true
+	else:
+		_orders_collapsed = not _orders_collapsed
+	_update_orders_visibility()
+
+
+func _order_row(order: Dictionary, index: int) -> PanelContainer:
+	var row := PanelContainer.new()
+	row.custom_minimum_size = Vector2(0, 36)
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.tooltip_text = "%s\n%s" % [_order_text(order), Loc.t("order_hover_tip")]
+	row.add_theme_stylebox_override("panel", UiStyle.row_box())
+
+	var line := HBoxContainer.new()
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_theme_constant_override("separation", 6)
+	row.add_child(line)
+
+	var is_move := String(order.get("type", "")) == "move"
+	var icon := UiIcon.new()
+	icon.custom_minimum_size = Vector2(13, 13)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	icon.kind = UiIcon.Kind.MOVE if is_move else UiIcon.Kind.RECRUIT
+	icon.tint = UiStyle.ACCENT if is_move else UiStyle.GOLD
+	line.add_child(icon)
+
+	var label := Label.new()
+	label.text = _order_short_text(order)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", UiStyle.FONT_SMALL)
+	label.add_theme_color_override("font_color", UiStyle.TEXT)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	line.add_child(label)
+
+	var count := Label.new()
+	count.text = _order_count_text(order)
+	count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	count.add_theme_font_size_override("font_size", UiStyle.FONT_SMALL)
+	count.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
+	count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_child(count)
+
+	# Flat and small: the row is about the order, not the remove button. A
+	# bordered 30px button also stole the width long province names need.
+	var cancel := Button.new()
+	cancel.text = "×"
+	cancel.tooltip_text = Loc.t("cancel")
+	cancel.custom_minimum_size = Vector2(20, 22)
+	cancel.flat = true
+	cancel.add_theme_font_size_override("font_size", UiStyle.FONT_BODY)
+	cancel.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
+	cancel.add_theme_color_override("font_hover_color", UiStyle.DANGER)
+	cancel.add_theme_color_override("font_pressed_color", UiStyle.DANGER)
+	cancel.pressed.connect(_on_cancel_order.bind(index))
+	line.add_child(cancel)
+
+	row.gui_input.connect(_on_order_row_input.bind(order))
+	row.mouse_entered.connect(_on_order_row_hover.bind(order, true))
+	row.mouse_exited.connect(_on_order_row_hover.bind(order, false))
+	return row
+
+
+func _on_order_row_input(event: InputEvent, order: Dictionary) -> void:
+	if event is not InputEventMouseButton:
+		return
+	var button_event := event as InputEventMouseButton
+	if not button_event.pressed or button_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var province_id := String(order.get("from_id", order.get("province_id", "")))
+	if not province_id.is_empty():
+		_select(province_id)
+
+
+func _on_order_row_hover(order: Dictionary, hovered: bool) -> void:
+	if map_view != null:
+		map_view.set_hovered_order(order if hovered else {})
 
 
 ## Height for a card's scroll area: one row per entry, capped so a long list
-## never pushes the card past the bottom of the screen.
+## never pushes the card past the bottom of the screen. The 4px handles the
+## VBox separation, otherwise two battles need a scrollbar for a 4px overflow.
 func _card_list_height(rows: int, row_height: float) -> float:
 	var max_height := get_viewport().get_visible_rect().size.y * CARD_MAX_HEIGHT_RATIO
-	return clampf(float(rows) * row_height, row_height, maxf(max_height - 52.0, row_height))
+	var needed := float(rows) * row_height + float(maxi(rows - 1, 0)) * 4.0
+	return clampf(needed, row_height, maxf(max_height - 52.0, row_height))
+
+
+func _order_short_text(order: Dictionary) -> String:
+	if String(order.get("type", "")) == "move":
+		return Loc.t("order_short_move", [
+			_province_name(String(order.get("from_id", ""))),
+			_province_name(String(order.get("to_id", ""))),
+		])
+	return Loc.t("order_short_recruit", [
+		int(order.get("count", 0)), Loc.unit_name(String(order.get("unit_id", ""))),
+	])
+
+
+func _order_count_text(order: Dictionary) -> String:
+	if String(order.get("type", "")) == "move":
+		var troops := CombatResolver.troop_count(order.get("units", {}))
+		return Loc.t("order_count_one" if troops == 1 else "order_count", [troops])
+	# The short text already reads "+1 Besteiros"; a trailing x1 only repeats it.
+	return ""
 
 
 func _order_text(order: Dictionary) -> String:
@@ -697,7 +1118,7 @@ func _order_text(order: Dictionary) -> String:
 func _on_cancel_order(index: int) -> void:
 	var result := game.cancel_order(PLAYER, index)
 	if not bool(result.get("ok", false)):
-		_hint.text = Loc.reason(String(result.get("reason", "")))
+		_show_toast(Loc.reason(String(result.get("reason", ""))))
 	_refresh()
 
 
@@ -714,7 +1135,6 @@ func _province_name(province_id: String) -> String:
 
 func _on_game_finished(winner: int) -> void:
 	_cancel_march()
-	_hint.text = ""
 	_game_over_winner = winner
 	_build_game_over()
 

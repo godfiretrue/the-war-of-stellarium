@@ -7,11 +7,15 @@ extends RefCounted
 ## static: no node, no state.
 
 const BG := Color(0.035, 0.040, 0.075)
-const BAR := Color(0.043, 0.051, 0.071, 0.92)
-const PANEL := Color(0.055, 0.062, 0.098, 0.96)
+const BAR := Color(0.035, 0.042, 0.062, 0.96)
+const PANEL := Color(0.043, 0.050, 0.080, 0.97)
+const PANEL_SOFT := Color(0.060, 0.069, 0.105, 0.96)
 
 const ACCENT := Color(0.55, 0.62, 1.0)
 const GOLD := Color(0.98, 0.83, 0.45)
+## Thin trim used on every campaign panel; deliberately duller than GOLD.
+const GOLD_TRIM := Color(0.72, 0.58, 0.30, 0.95)
+const GOLD_LINE := Color(0.80, 0.67, 0.36, 0.75)
 const DANGER := Color(0.86, 0.42, 0.40)
 
 const TEXT := Color(0.86, 0.88, 0.95)
@@ -21,6 +25,13 @@ const TEXT_DISABLED := Color(0.42, 0.44, 0.52)
 const HUMAN := Color(0.35, 0.60, 1.0)
 const ELVES := Color(0.30, 0.90, 0.50)
 const NEUTRAL := Color(0.72, 0.74, 0.80)
+
+# --- One font scale ------------------------------------------------------
+# Every game screen picks one of these three sizes so the HUD, the settings
+# panel and the menu never drift apart.
+const FONT_TITLE := 20
+const FONT_BODY := 13
+const FONT_SMALL := 11
 
 
 static func faction_color(faction: int) -> Color:
@@ -72,7 +83,9 @@ static func panel_box() -> StyleBoxFlat:
 
 
 static func capsule(fill: Color, border: Color) -> StyleBoxFlat:
-	var box := flat(fill, border, 12)
+	# Radius stays below half the pill height: a radius that exactly reaches the
+	# mid-line makes StyleBoxFlat's border arcs overlap into visible notches.
+	var box := flat(fill, border, 9)
 	box.content_margin_left = 10.0
 	box.content_margin_right = 10.0
 	box.content_margin_top = 2.0
@@ -137,3 +150,90 @@ static func apply_ghost_button(button: Button) -> void:
 	button.add_theme_stylebox_override("hover", box(Color(0.16, 0.18, 0.33, 0.75), ACCENT, 2, 10.0, 6.0))
 	button.add_theme_stylebox_override("pressed", box(Color(0.22, 0.25, 0.48, 0.9), Color.WHITE, 2, 10.0, 6.0))
 	button.add_theme_stylebox_override("disabled", box(Color(0.0, 0.0, 0.0, 0.0), Color(0.0, 0.0, 0.0, 0.0), 0, 10.0, 6.0))
+
+
+## Small tab/header button: same family as the HUD buttons, gold-edged.
+static func apply_tab_button(button: Button) -> void:
+	apply_hud_button(button)
+	button.add_theme_stylebox_override(
+		"normal", box(Color(0.055, 0.065, 0.100, 0.96), GOLD_TRIM, 3, 9.0, 4.0)
+	)
+	button.add_theme_stylebox_override(
+		"hover", box(Color(0.13, 0.15, 0.25, 0.98), GOLD, 3, 9.0, 4.0)
+	)
+
+
+# --- Campaign theme ------------------------------------------------------
+
+## The campaign HUD theme: flat dark-navy panels with a thin gold trim, one
+## font scale and one tooltip look. Node overrides still add accents, but every
+## default comes from here so the pieces share one recipe.
+static func hud_theme() -> Theme:
+	var theme := Theme.new()
+	theme.default_font_size = FONT_BODY
+	theme.set_color("font_color", "Label", TEXT)
+	theme.set_font_size("font_size", "Label", FONT_BODY)
+
+	var panel := hud_panel()
+	theme.set_stylebox("panel", "PanelContainer", panel)
+	theme.set_stylebox("panel", "Panel", panel)
+
+	var tip := flat(Color(0.025, 0.030, 0.050, 0.98), GOLD_TRIM, 3)
+	tip.set_border_width_all(2)
+	tip.set_content_margin_all(8.0)
+	theme.set_stylebox("panel", "TooltipPanel", tip)
+	theme.set_color("font_color", "TooltipLabel", TEXT)
+	theme.set_font_size("font_size", "TooltipLabel", FONT_SMALL)
+
+	# Scrollbars only appear when a queue or report is long. Keep them thin and
+	# quiet so they never compete with the rows they scroll.
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	track.content_margin_left = 2.0
+	track.content_margin_right = 2.0
+	var grabber := flat(Color(0.26, 0.30, 0.42, 0.85), Color(0.0, 0.0, 0.0, 0.0), 3)
+	var grabber_hot := flat(GOLD_TRIM, Color(0.0, 0.0, 0.0, 0.0), 3)
+	theme.set_stylebox("scroll", "VScrollBar", track)
+	theme.set_stylebox("grabber", "VScrollBar", grabber)
+	theme.set_stylebox("grabber_highlight", "VScrollBar", grabber_hot)
+	theme.set_stylebox("grabber_pressed", "VScrollBar", grabber_hot)
+	return theme
+
+
+## Main campaign panel: dark navy, thin gold trim, small corner radius.
+static func hud_panel() -> StyleBoxFlat:
+	var box := flat(PANEL, GOLD_TRIM, 5)
+	box.set_border_width_all(1)
+	box.content_margin_left = 16.0
+	box.content_margin_right = 16.0
+	box.content_margin_top = 12.0
+	box.content_margin_bottom = 12.0
+	return box
+
+
+## Slimmer box for nested rows (order queue, battle entries).
+static func row_box() -> StyleBoxFlat:
+	var box := flat(Color(0.070, 0.080, 0.120, 0.92), Color(0.22, 0.25, 0.38, 0.75), 3)
+	box.set_content_margin_all(4.0)
+	box.content_margin_left = 8.0
+	box.content_margin_right = 8.0
+	return box
+
+
+static func row_hover_box() -> StyleBoxFlat:
+	var box := flat(Color(0.12, 0.15, 0.26, 0.96), GOLD_TRIM, 3)
+	box.set_content_margin_all(4.0)
+	box.content_margin_left = 8.0
+	box.content_margin_right = 8.0
+	return box
+
+
+## Unit card in the garrison strip: faction-edged tile.
+static func unit_card_box(faction: int) -> StyleBoxFlat:
+	var accent := faction_color(faction)
+	accent.a = 0.85
+	var box := flat(Color(0.075, 0.085, 0.125, 0.96), accent, 3)
+	box.set_content_margin_all(5.0)
+	box.content_margin_left = 7.0
+	box.content_margin_right = 7.0
+	return box
