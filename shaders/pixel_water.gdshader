@@ -19,21 +19,19 @@ uniform float seed : hint_range(0.0, 100.0, 0.0) = 3.0;
 // Animation speed, in loops per second. The animation repeats exactly after 1 / speed seconds.
 uniform float speed : hint_range(0.0, 1.0, 0.005) = 0.125;
 // Size of the waves (higher = more, smaller waves).
-uniform float scale : hint_range(0.5, 8.0, 0.1) = 2.0;
+uniform float scale : hint_range(0.5, 8.0, 0.1) = 1.7;
 // Direction the water flows, in radians (0 = right, 1.57 = down).
 uniform float flow_angle : hint_range(-3.14, 3.14, 0.01) = 0.5;
 // How much the waves bend the pattern (0 = straight ripples).
-uniform float turbulence : hint_range(0.0, 2.0, 0.01) = 0.8;
+uniform float turbulence : hint_range(0.0, 2.0, 0.01) = 1.0;
 // Brightness balance: negative = darker, deeper water; positive = lighter, shallower water.
 uniform float depth : hint_range(-0.5, 0.5, 0.01) = 0.0;
 // Amount of white crests on top of the waves (0 = none).
-uniform float crest_amount : hint_range(0.0, 1.0, 0.01) = 0.5;
+uniform float crest_amount : hint_range(0.0, 1.0, 0.01) = 0.35;
 // Width of the foam band along the coast (0 = no foam).
-uniform float foam_width : hint_range(0.0, 1.0, 0.01) = 0.5;
-// Width of the lighter shallow water along the coast.
-uniform float shallow_width : hint_range(0.0, 1.0, 0.01) = 0.5;
+uniform float foam_width : hint_range(0.0, 1.0, 0.01) = 0.55;
 // Height of the long swells that roll across the open water (0 = none).
-uniform float swell : hint_range(0.0, 1.0, 0.01) = 0.5;
+uniform float swell : hint_range(0.0, 1.0, 0.01) = 0.7;
 // Cloud shadows drifting over everything (0 = none).
 uniform float cloud_shadow : hint_range(0.0, 1.0, 0.01) = 0.5;
 // Amount of tiny glints that flash on the water (0 = none).
@@ -46,15 +44,6 @@ uniform vec4 color_light : source_color = vec4(0.180, 0.561, 0.659, 1.0);
 uniform vec4 color_crest : source_color = vec4(0.804, 0.918, 0.949, 1.0);
 uniform vec4 color_shallow : source_color = vec4(0.310, 0.710, 0.769, 1.0);
 uniform vec4 color_foam : source_color = vec4(0.910, 0.969, 0.980, 1.0);
-
-// 4x4 Bayer matrix as a 0..1 threshold for a pixel cell.
-float bayer4(vec2 c) {
-	int x = int(mod(c.x, 4.0));
-	int y = int(mod(c.y, 4.0));
-	int idx = y * 4 + x;
-	int m[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
-	return (float(m[idx]) + 0.5) / 16.0;
-}
 
 float hash(vec2 p) {
 	p = fract(p * vec2(0.1031, 0.1030) + seed * 0.013);
@@ -106,33 +95,42 @@ void fragment() {
 
 	// Smooth blends instead of hard threshold bands: the big open-water areas
 	// at the screen edges no longer turn into flat near-black wedges.
-	vec3 col = mix(color_deep.rgb, color_mid.rgb, smoothstep(0.34, 0.54, h));
-	col = mix(col, color_light.rgb, smoothstep(0.54, 0.70, h));
+	vec3 col = mix(color_deep.rgb, color_mid.rgb, smoothstep(0.30, 0.52, h));
+	col = mix(col, color_light.rgb, smoothstep(0.58, 0.76, h));
 
 	// f.a is the sea-cell distance to the nearest land, normalised over
-	// depth_range pixels. Rescale it to the original shader's 0..0.12 coast band
-	// so its foam/shallow thresholds keep their meaning at any depth_range.
-	float d = f.a * (depth_range / 200.0) * 0.12;
-	float bayer = bayer4(cell);
-	float dd = d * 8.0 / max(shallow_width, 0.05) + (bayer - 0.5) * 0.12;
-	vec3 shore_col = dd < 0.12 ? color_shallow.rgb
-		: (dd < 0.30 ? color_light.rgb : (dd < 0.55 ? color_mid.rgb : color_deep.rgb));
-	col = dd < 0.30 ? shore_col : col;
+	// depth_range pixels. The shelf is a narrow, soft tint that hugs the coast:
+	// no bright cyan ring and no stack of quantised bands.
+	float coast = clamp(f.a * (200.0 / max(depth_range, 1.0)), 0.0, 1.0);
+	float coast_noise = flow_noise(pos * 1.35 + 37.0, dir, phase) - 0.5;
+	float shore = 1.0 - smoothstep(0.0, 0.07, coast);
+	float band = clamp(shore + coast_noise * 0.04, 0.0, 1.0);
+	vec3 coast_col = mix(color_mid.rgb, color_light.rgb, smoothstep(0.15, 0.80, band));
+	col = mix(col, coast_col, smoothstep(0.05, 0.45, band) * 0.55);
 
-	// Lapping waves: foam lines travelling from open water towards the coast.
-	float wave_pos = fract(d * 24.0 / max(foam_width, 0.05) * 0.5 - phase * 2.0 + f.a * 0.6);
-	float thin = clamp(d / 0.05, 0.35, 1.0);
-	float lap = step(wave_pos, 0.17 * thin) * step(d, 0.04) * step(0.006, d);
-	col = lap > 0.5 ? color_foam.rgb : col;
-	// Solid foam right at the shore, breathing with the phase.
-	float breathe = 0.5 + 0.5 * sin(phase * 6.2831853 + f.a * 6.0);
-	float foam_w = (0.0020 + 0.0030 * breathe) * foam_width * 2.0;
-	col = d < foam_w ? color_foam.rgb : col;
+	// Foam is a thin, sparse waterline fleck. A higher frequency than the waves
+	// keeps it from merging into a solid white border around every province.
+	float foam_band = 1.0 - smoothstep(0.0, 0.012, coast);
+	float foam_noise = flow_noise(pos * 5.0 + 51.0, dir, phase * 1.3);
+	float foam = foam_band * smoothstep(0.72, 0.92, foam_noise) * foam_width;
+	col = mix(col, color_foam.rgb, foam * 0.22);
 
-	// Crest lines in the open water only.
+	// Lapping waves: faint broken lines rolling in from open water.
+	float wave_pos = fract(coast * 36.0 - phase * 1.4 + coast_noise * 0.8);
+	float lap_band = 1.0 - smoothstep(0.0, 0.055, coast);
+	float lap = smoothstep(0.18, 0.0, wave_pos) * lap_band;
+	lap *= smoothstep(0.50, 0.80, flow_noise(pos * 3.0 + 7.0, dir, phase * 1.1));
+	col = mix(col, color_foam.rgb, lap * 0.12);
+
+	// Fine detail only appears once the camera is close enough for it to read.
+	// At the fitted view one water cell is many screen pixels wide, so crests
+	// and glints would become isolated white blocks instead of waves.
+	float zoom_detail = smoothstep(0.9, 1.6, view_zoom);
+
+	// Crest lines in open water only, soft enough not to become white blocks.
 	float line = step(abs(flow_noise(bent * 1.6 + 21.0, dir * 3.0, phase) - 0.5),
-			0.035 * crest_amount * 2.0) * step(0.45, h);
-	col = dd > 0.55 ? mix(col, color_crest.rgb, line) : col;
+			0.030 * crest_amount * 2.0) * step(0.50, h);
+	col = coast > 0.40 ? mix(col, color_crest.rgb, line * 0.35 * zoom_detail) : col;
 
 	// Cloud shadows: a big slow noise; where it is high, water drops a shade.
 	float cs = flow_noise(pos * 0.28 + 60.0, dir * 0.5, phase);
@@ -143,7 +141,7 @@ void fragment() {
 	if (sparkle_amount > 0.0) {
 		float t = fract(phase * 3.0 + hash(cell));
 		float on = step(hash(cell + 17.0), 0.004 * sparkle_amount * 2.0) * step(t, 0.12);
-		col = mix(col, color_foam.rgb, on);
+		col = mix(col, color_foam.rgb, on * 0.35 * zoom_detail);
 	}
 	COLOR = vec4(col, 1.0);
 	}

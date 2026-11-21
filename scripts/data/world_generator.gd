@@ -34,6 +34,16 @@ const FILL_EPSILON := 0.00002
 ## Sea-cell distance to the coast is normalised over this many world pixels
 ## into the field image's alpha channel (for the pixel-water foam shader).
 const COAST_FADE_PX := 200.0
+## 5x5 Gaussian used to soften the coast-distance alpha after the BFS. The
+## distance field is quantised to CELL-sized steps, which otherwise show as a
+## staircase along the shoreline.
+const COAST_BLUR_KERNEL := [
+	[1, 4, 6, 4, 1],
+	[4, 16, 24, 16, 4],
+	[6, 24, 36, 24, 6],
+	[4, 16, 24, 16, 4],
+	[1, 4, 6, 4, 1],
+]
 
 const NAME_PREFIXES := [
 	"Thorn", "Silver", "Ash", "Raven", "Gold", "Frost", "Oak", "Stone", "Mist", "Ember",
@@ -1237,4 +1247,43 @@ func _build_field_image() -> Image:
 			floats[base + 3] = 0.0
 		else:
 			floats[base + 3] = minf(float(steps) * CELL / COAST_FADE_PX, 1.0) if steps > 0 else 1.0
+	floats = _blur_coast_alpha(floats)
 	return Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGBAF, floats.to_byte_array())
+
+
+## Softens the quantised coast-distance alpha with a sea-only Gaussian. Land
+## texels are excluded from the weights, so the land mask stays exact and the
+## first sea cell keeps its distance instead of being dragged towards zero.
+func _blur_coast_alpha(floats: PackedFloat32Array) -> PackedFloat32Array:
+	var total := GRID_W * GRID_H
+	var alpha := PackedFloat32Array()
+	alpha.resize(total)
+	for index in total:
+		alpha[index] = floats[index * 4 + 3]
+	var smoothed := alpha.duplicate()
+	for y in GRID_H:
+		for x in GRID_W:
+			var index := y * GRID_W + x
+			if _elev[index] >= SEA_LEVEL or alpha[index] >= 0.5:
+				continue
+			var sum := 0.0
+			var weight := 0.0
+			for oy in range(-2, 3):
+				var ny := y + oy
+				if ny < 0 or ny >= GRID_H:
+					continue
+				for ox in range(-2, 3):
+					var nx := x + ox
+					if nx < 0 or nx >= GRID_W:
+						continue
+					var neighbor := ny * GRID_W + nx
+					if _elev[neighbor] >= SEA_LEVEL:
+						continue
+					var w := float(COAST_BLUR_KERNEL[oy + 2][ox + 2])
+					sum += alpha[neighbor] * w
+					weight += w
+			if weight > 0.0:
+				smoothed[index] = sum / weight
+	for index in total:
+		floats[index * 4 + 3] = smoothed[index]
+	return floats

@@ -79,8 +79,8 @@ void fragment() {
 		col += (fbm(px * 0.045) - 0.5) * 0.05;
 		// Cold northern water reads greyer and harder.
 		col = mix(col, vec3(0.22, 0.31, 0.38), smoothstep(0.34, 0.14, temp) * 0.40);
-		float foam = smoothstep(0.024, 0.0, sea_level - e);
-		col = mix(col, vec3(0.70, 0.84, 0.86), foam * 0.45);
+		// The water layer above owns the shoreline foam and shallow shelf, so
+		// this fallback sea stays flat instead of drawing a second coast.
 	} else {
 		// Biome from moisture and temperature, broken up with noise so the
 		// edges between biomes are not geometric.
