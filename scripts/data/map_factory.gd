@@ -49,7 +49,11 @@ static func _apply_starting_armies(state: MapState) -> void:
 		if second != null:
 			second.add_units(unit_id, Balance.SECOND_PROVINCE_STARTING_TROOPS)
 
-	# Every owned province starts with its full levy; neutral ground has none.
+	# Every owned province starts with its full levy. Neutral ground has none,
+	# except fortresses, which keep a small initial garrison so they are a real
+	# obstacle instead of a free race.
 	for province in state.provinces:
 		if not province.is_neutral():
 			province.home_guard = province.home_guard_cap()
+		elif province.is_fortress:
+			province.home_guard = Balance.HOME_GUARD_MAX

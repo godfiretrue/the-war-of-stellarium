@@ -30,6 +30,8 @@ const STRINGS := {
 		"faction_neutral": "Neutro",
 		"terrain_plains": "Planícies",
 		"terrain_mountains": "Montanhas",
+		"terrain_forest": "Floresta",
+		"terrain_coast": "Costa",
 		"territory_capital_port": "Porto Capital",
 		"territory_fortress": "Fortaleza",
 		"territory_fortress_pass": "Passo Fortificado",
@@ -93,6 +95,8 @@ const STRINGS := {
 		"tip_gold": "Ouro: %d\nRendimento: +%d · Manutenção: -%d",
 		"tip_manpower": "Mão-de-obra: %d\nRendimento: +%d",
 		"tip_resource": "%s: %d\nRendimento: +%d",
+		"tip_terrain": "Rendimento base: +%d ouro, +%d mão-de-obra\nDefesa: ×%.2f",
+		"fortress_upkeep": "Fortaleza: -%d ouro/turno",
 		"tip_orders_toggle": "Mostrar ou esconder a fila de ordens",
 		"tip_orders_collapse": "Recolher a fila de ordens",
 		"orders_tab": "Ordens (%d)",
@@ -171,6 +175,8 @@ const STRINGS := {
 		"faction_neutral": "Neutral",
 		"terrain_plains": "Plains",
 		"terrain_mountains": "Mountains",
+		"terrain_forest": "Forest",
+		"terrain_coast": "Coast",
 		"territory_capital_port": "Capital Port",
 		"territory_fortress": "Fortress",
 		"territory_fortress_pass": "Fortress Pass",
@@ -234,6 +240,8 @@ const STRINGS := {
 		"tip_gold": "Gold: %d\nIncome: +%d · Upkeep: -%d",
 		"tip_manpower": "Manpower: %d\nIncome: +%d",
 		"tip_resource": "%s: %d\nIncome: +%d",
+		"tip_terrain": "Base income: +%d gold, +%d manpower\nDefence: ×%.2f",
+		"fortress_upkeep": "Fortress: -%d gold/turn",
 		"tip_orders_toggle": "Show or hide the order queue",
 		"tip_orders_collapse": "Collapse the order queue",
 		"orders_tab": "Orders (%d)",
@@ -320,7 +328,14 @@ static func faction_name(faction: int) -> String:
 
 
 static func terrain_name(terrain: int) -> String:
-	return t("terrain_plains") if terrain == Balance.Terrain.PLAINS else t("terrain_mountains")
+	match terrain:
+		Balance.Terrain.MOUNTAINS:
+			return t("terrain_mountains")
+		Balance.Terrain.FOREST:
+			return t("terrain_forest")
+		Balance.Terrain.COAST:
+			return t("terrain_coast")
+	return t("terrain_plains")
 
 
 static func resource_name(resource_key: String) -> String:

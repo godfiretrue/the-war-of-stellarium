@@ -31,6 +31,9 @@ const MAX_ATTEMPTS := 12
 const RIVER_MIN_DRAINAGE := 140
 ## Height added per flood step, so filled basins keep a downhill gradient.
 const FILL_EPSILON := 0.00002
+## Sea-cell distance to the coast is normalised over this many world pixels
+## into the field image's alpha channel (for the pixel-water foam shader).
+const COAST_FADE_PX := 200.0
 
 const NAME_PREFIXES := [
 	"Thorn", "Silver", "Ash", "Raven", "Gold", "Frost", "Oak", "Stone", "Mist", "Ember",
@@ -132,17 +135,23 @@ static func _ensure_neighbor_tables() -> void:
 ## The only hand-placed content: the places the story needs to exist.
 func _make_anchors() -> Array[Dictionary]:
 	var list: Array[Dictionary] = [
-		{"id": "aldermere", "name": "Aldermere", "pos": Vector2(180, 300), "mountain": false,
+		{"id": "aldermere", "name": "Aldermere", "pos": Vector2(180, 300),
+			"terrain": Balance.Terrain.COAST, "fortress": true,
 			"owner": Balance.Faction.HUMANS, "capital": true, "type": "Capital Port"},
-		{"id": "stonewatch", "name": "Stonewatch", "pos": Vector2(335, 150), "mountain": true,
+		{"id": "stonewatch", "name": "Stonewatch", "pos": Vector2(335, 150),
+			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.HUMANS, "capital": false, "type": "Fortress"},
-		{"id": "iron_pass", "name": "Iron Pass", "pos": Vector2(540, 255), "mountain": true,
+		{"id": "iron_pass", "name": "Iron Pass", "pos": Vector2(540, 255),
+			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.NEUTRAL, "capital": false, "type": "Fortress Pass"},
-		{"id": "oakhaven", "name": "Oakhaven", "pos": Vector2(700, 365), "mountain": false,
+		{"id": "oakhaven", "name": "Oakhaven", "pos": Vector2(700, 365),
+			"terrain": Balance.Terrain.FOREST, "fortress": false,
 			"owner": Balance.Faction.NEUTRAL, "capital": false, "type": "River Town"},
-		{"id": "dawnwatch_spire", "name": "Dawnwatch Spire", "pos": Vector2(830, 135), "mountain": true,
+		{"id": "dawnwatch_spire", "name": "Dawnwatch Spire", "pos": Vector2(830, 135),
+			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.ELVES, "capital": false, "type": "Elven Spire"},
-		{"id": "ysolde", "name": "Ysolde", "pos": Vector2(960, 295), "mountain": true,
+		{"id": "ysolde", "name": "Ysolde", "pos": Vector2(960, 295),
+			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.ELVES, "capital": true, "type": "Capital Citadel"},
 	]
 	return list
@@ -304,7 +313,7 @@ func _build_ranges() -> void:
 	_add_range(west, 36.0, 0.34)
 
 	for anchor in _anchors:
-		if not anchor["mountain"]:
+		if int(anchor["terrain"]) != Balance.Terrain.MOUNTAINS:
 			continue
 		var center: Vector2 = anchor["pos"]
 		var heading := _rng.randf_range(0.0, TAU)
@@ -342,7 +351,7 @@ func _apply_ranges(grain: FastNoiseLite) -> void:
 func _carve_anchor_passes() -> void:
 	var radius := 74.0
 	for anchor in _anchors:
-		if anchor["mountain"]:
+		if int(anchor["terrain"]) == Balance.Terrain.MOUNTAINS:
 			continue
 		var center: Vector2 = anchor["pos"]
 		var min_x := maxi(int((center.x - radius) / CELL), 0)
@@ -760,13 +769,25 @@ func _assemble_state() -> MapState:
 		province.map_position = _cell_point(centers[index])
 		province.resource_per_turn = Balance.FACTION_RESOURCE_PER_TURN
 
+		# Coast is checked before forest: access to the sea matters more for
+		# trade than rainfall, and it keeps a wet shoreline a port instead of
+		# turning every coastal province into forest.
 		var kind := "plains"
 		if mountain_fraction > 0.30 or mean_elev > 0.72:
 			kind = "mountain"
-		elif mean_moist > 0.60:
-			kind = "forest"
-		elif coast_fraction > 0.22:
+		elif coast_fraction > 0.28:
 			kind = "coast"
+		elif mean_moist > 0.58:
+			kind = "forest"
+
+		var terrain := Balance.Terrain.PLAINS
+		match kind:
+			"mountain":
+				terrain = Balance.Terrain.MOUNTAINS
+			"coast":
+				terrain = Balance.Terrain.COAST
+			"forest":
+				terrain = Balance.Terrain.FOREST
 
 		if index < _anchors.size():
 			var anchor: Dictionary = _anchors[index]
@@ -774,9 +795,10 @@ func _assemble_state() -> MapState:
 			province.display_name = String(anchor["name"])
 			province.is_capital = bool(anchor["capital"])
 			province.is_city = true
+			province.is_fortress = bool(anchor.get("fortress", false))
 			province.owner_faction = int(anchor["owner"])
 			province.territory_type = String(anchor["type"])
-			kind = "mountain" if bool(anchor["mountain"]) else "plains"
+			terrain = int(anchor["terrain"])
 			if province.territory_type == "River Town" and river_cells[index] == 0:
 				province.territory_type = "Market Town"
 		else:
@@ -785,7 +807,7 @@ func _assemble_state() -> MapState:
 			province.display_name = _unique_name(kind, used_names)
 			province.id = province.display_name.to_lower().replace(" ", "_")
 
-		province.terrain = Balance.Terrain.MOUNTAINS if kind == "mountain" else Balance.Terrain.PLAINS
+		province.terrain = terrain
 		province.resource_type = Balance.terrain_resource(province.terrain)
 		province.capital_of = province.owner_faction if province.is_capital else Balance.Faction.NEUTRAL
 		provinces.append(province)
@@ -896,8 +918,15 @@ func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_c
 			continue
 		var province := provinces[index]
 		var score := _rng.randf() * 0.4
-		if province.terrain == Balance.Terrain.PLAINS:
-			score += 1.0
+		match province.terrain:
+			Balance.Terrain.PLAINS:
+				score += 1.0
+			Balance.Terrain.COAST:
+				score += 0.8
+			Balance.Terrain.FOREST:
+				score += 0.5
+			Balance.Terrain.MOUNTAINS:
+				score += 0.2
 		if river_cells[index] > 5:
 			score += 0.5
 		if coast_cells[index] > 8:
@@ -939,7 +968,10 @@ func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_c
 func _promote_city(province: ProvinceData, river_cells: int, coast_cells: int) -> void:
 	province.is_city = true
 	if province.terrain == Balance.Terrain.MOUNTAINS:
+		province.is_fortress = true
 		province.territory_type = "Fortress"
+	elif province.terrain == Balance.Terrain.COAST:
+		province.territory_type = "Port Town"
 	elif river_cells > 5:
 		province.territory_type = "River Town"
 	elif coast_cells > 8:
@@ -1152,13 +1184,57 @@ func _chaikin_open(points: PackedVector2Array, iterations: int) -> PackedVector2
 	return current
 
 
-## Elevation (R), moisture (G) and temperature (B) packed for the terrain shader.
+## Elevation (R), moisture (G), temperature (B) and distance from the sea cell
+## to the nearest land (A, normalised over COAST_FADE_PX) packed for the shaders.
+## The alpha channel is filled by one multi-source BFS starting at every sea
+## cell touching land, after _keep_main_land() has removed stray islands.
 func _build_field_image() -> Image:
 	var total := GRID_W * GRID_H
-	var floats := PackedFloat32Array()
-	floats.resize(total * 3)
+	var distances := PackedInt32Array()
+	distances.resize(total)
+	distances.fill(-1)
+	var queue := PackedInt32Array()
+	queue.resize(total)
+	var head := 0
+	var tail := 0
 	for index in total:
-		floats[index * 3] = _elev[index]
-		floats[index * 3 + 1] = _moist[index]
-		floats[index * 3 + 2] = _temp[index]
-	return Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGBF, floats.to_byte_array())
+		if _elev[index] >= SEA_LEVEL:
+			continue
+		for side in 4:
+			var neighbor: int = _nbr4[index * 4 + side]
+			if neighbor < 0 or _elev[neighbor] < SEA_LEVEL or distances[neighbor] != -1:
+				continue
+			distances[neighbor] = 1
+			queue[tail] = neighbor
+			tail += 1
+	var max_steps := int(ceil(COAST_FADE_PX / float(CELL)))
+	while head < tail:
+		var index: int = queue[head]
+		head += 1
+		if distances[index] >= max_steps:
+			continue
+		for side in 4:
+			var neighbor: int = _nbr4[index * 4 + side]
+			if neighbor < 0 or _elev[neighbor] >= SEA_LEVEL or distances[neighbor] != -1:
+				continue
+			distances[neighbor] = distances[index] + 1
+			queue[tail] = neighbor
+			tail += 1
+
+	var floats := PackedFloat32Array()
+	floats.resize(total * 4)
+	for index in total:
+		var base := index * 4
+		floats[base] = _elev[index]
+		floats[base + 1] = _moist[index]
+		floats[base + 2] = _temp[index]
+		var steps: int = distances[index]
+		# Land keeps alpha 0 so the water shader stays transparent there. Sea
+		# cells the BFS never reached are isolated pockets with no land neighbour;
+		# they must read as fully offshore (alpha 1), not as zero-distance coast
+		# (which paints a solid foam wedge over them).
+		if _elev[index] >= SEA_LEVEL:
+			floats[base + 3] = 0.0
+		else:
+			floats[base + 3] = minf(float(steps) * CELL / COAST_FADE_PX, 1.0) if steps > 0 else 1.0
+	return Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGBAF, floats.to_byte_array())

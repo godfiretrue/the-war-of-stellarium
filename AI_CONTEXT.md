@@ -23,6 +23,11 @@ the capital is a temporary penalty rather than a loss, and the bot leaves a
 tiered garrison behind when it marches. See "Rules implemented" and "Balance
 findings" for the numbers behind each.
 
+Provinces have four terrains (plains, forest, coast, mountains) plus a
+`is_fortress` role: terrain drives gold/manpower income and defence, while a
+fortress adds defence and costs gold every turn, so the map has real strategic
+targets instead of 21 identical provinces.
+
 Engine: **Godot 4.7.2-stable** (the brief said 4.6.1; the project was created
 with 4.7 features and runs on the installed editor). GDScript only.
 
@@ -167,20 +172,24 @@ bar, a province dock at the bottom centre and panels on the screen edges.
 ## Rules implemented
 
 - 21 provinces generated per seed; 6 of them are guaranteed anchors (two
-  capitals, three fortresses, one river town), the rest are generated and
-  neutral. The province graph is always connected.
+  capitals, both fortresses; three further fortresses; one river town), the rest
+  are generated and neutral. The province graph is always connected.
 - 2 factions + neutral provinces; each faction starts with a connected block
   around its capital (~30% of the map, clamped 5-8 provinces).
 - 10 cities per map: the 6 anchors plus up to 4 promoted towns.
 - Recruitment is only allowed in cities/castles (`ProvinceData.is_city`); open
   corridors are movement-only.
-- Income at resolution: 15 gold and 5 manpower per province, capital +8/+2,
-  faction resource (Humans: Aether on Plains, Elves: Iron on Mountains) +2.
+- Income at resolution: per-terrain base gold/manpower (Plains 13/10, Forest
+  12/6, Coast 20/2, Mountains 19/4), capital +8/+2, faction resource (Humans:
+  Aether on plains, forest and coast; Elves: Iron on mountains) +2. A fortress
+  costs 4 gold/turn upkeep, charged even while the province is in unrest.
 - Home guard (`Balance.HOME_GUARD_*`): every owned province holds militia that
   defends but never marches, costs no upkeep and is lost with the province. It
   regenerates 1/turn up to 2 (4 in a capital), starts full in the initial map,
   absorbs defender losses before the garrison, and counts in `defence_troops()`
-  so the bot treats a militia-only province as defended.
+  so the bot treats a militia-only province as defended. Neutral fortresses
+  start with `HOME_GUARD_MAX` (2) militia and keep it through
+  `regen_home_guards()`; other neutral ground stays empty.
 - Conquest unrest (`Balance.CONQUEST_UNREST_*`): a province that changes hands
   produces no income and cannot recruit for 2 resolution steps. Captures set
   the counter in `resolve_turn()`; `advance_turn_state()` counts it down after
@@ -220,7 +229,9 @@ bar, a province dock at the bottom centre and panels on the screen edges.
 - Survivors return to their origin only if their faction still owns it after
   every capture; otherwise they are lost.
 - Combat: attacker `sum(atk*count)`, defender `sum(def*count) + militia*4`,
-  all times terrain (Plains 1.0, Mountains 1.25), everything x random 0.9-1.1.
+  all times the terrain multiplier (Plains 1.0, Forest 1.15, Coast 1.0,
+  Mountains 1.35) plus 0.25 when the province is a fortress, everything x
+  random 0.9-1.1.
   `ratio = att/(att+def)`; attacker loses `ceil(att*(1-ratio)*0.7)`,
   defender loses `ceil(def*ratio*1.0)`, militia first then the garrison.
   Loss factors were left at 0.7/1.0: the target was reached without them.
@@ -256,8 +267,14 @@ Pipeline (`world_generator.gd`):
 4. `_grow_provinces` - 6 anchors are fixed, the rest are grown by seeded
    multi-source BFS until `TARGET_PROVINCES` (21) regions exist; a retry loop
    merges/regrows until the graph is connected.
-5. `_assemble_state` - classification (mountain/forest/coast/plains), names,
-   cities, ownership, polygons, and the RGB field image for the shader.
+5. `_assemble_state` - classification in the order mountain
+   (`mountain_fraction > 0.30` or `mean_elev > 0.72`) > coast
+   (`coast_fraction > 0.28`) > forest (`mean_moist > 0.58`) > plains; then
+   names, cities, ownership, polygons, and the RGB field image for the shader.
+   Terrain is stored on the province and drives income, defence and the faction
+   resource. `_designate_cities` scores plains 1.0, coast 0.8, forest 0.5 and
+   mountains 0.2 (plus river/coast bonuses); a promoted mountain city becomes a
+   fortress, and a coastal one is named Port Town.
 
 Rendering: `map_view.gd` feeds `MapState.field_image` (R=elevation,
 G=moisture, B=temperature) to `shaders/terrain.gdshader`, which paints sea,
@@ -272,9 +289,11 @@ Invariants are checked by `scripts/tools/worldgen_sweep.gd` (24 seeds, ~700-
 godot --headless --path . --script res://scripts/tools/worldgen_sweep.gd
 ```
 
-It asserts 21 provinces, all 6 anchors present, connected graph, non-empty
-polygons, exactly 10 cities, at least 6 rivers and at least 3 provinces per
-faction. Run it after any change to generation.
+It asserts 21 provinces, all 6 anchors present with their expected terrain and
+fortress flag, connected graph, non-empty polygons, exactly 10 cities, at least
+6 rivers and at least 3 provinces per faction, and prints the terrain
+distribution (latest: Plains 172, Mountains 146, Forest 161, Coast 25 across 24
+seeds). Run it after any change to generation.
 
 ## Balance findings (measured, not guessed)
 
@@ -300,6 +319,7 @@ run on the same seeds, so the effect of one rule is isolated:
 | doctrine, attacks commit the whole army | Humans 15, Elves 4, 1 unfinished; 75% / 20% / 5%; 60.5 turns |
 | doctrine, attack keeps 1, reposition keeps the tier | Elves 10, Humans 7, 3 unfinished; 50% / 35% / 15%; 111.5 turns |
 | **final:** as above, but a stalled front attacks with everything | **Humans 9, Elves 11; 45% / 55%; 116.8 turns; 0 unfinished; 0 queue failures** |
+| **terrain economy + fortresses (v0.5):** Plains 13/10, Forest 12/6, Coast 20/2, Mountains 19/4; five fortresses at 4 gold/turn | **Humans 9, Elves 11; 45% / 55%; 76.0 turns; 0 unfinished; 0 queue failures** |
 
 Target met: no faction above ~55% and average length far above 10 turns.
 
@@ -324,6 +344,14 @@ What each measurement says:
 - `ATTACKER_LOSS_FACTOR` / `DEFENDER_LOSS_FACTOR` were **not** changed: the
   target was reached at 0.7/1.0, and lowering lethality would mostly lengthen
   already long wars.
+- The terrain economy is **capital-sensitive** because `BotController` recruits
+  only in its capital (`_recruitment_province()`), so the capital's net gold
+  sets army growth. The first terrain table gave the coast capital 32 gross gold
+  against 20 for the mountain capital, which also paid 8 fortress upkeep (12
+  net), producing a 95/5 Human runaway. Raising mountain gold to 19 and making
+  Aldermere a fortress (2 fortresses per side, 8 gold upkeep each) restored the
+  45/55 split. Re-measure if recruitment ever spreads to other cities, since
+  that removes this coupling.
 
 Do not tune by cost multipliers alone; re-measure with the 20-game runner
 above. Three of the doctrine rows ended unfinished (the 400-turn cap); a rule
@@ -389,9 +417,10 @@ win rate, so always check that column.
   This bot never returns `RUNNING` — a turn is resolved in one tick.
 - JSON parses every number as float: cast with `int()` when loading saves.
 - Saves go to `user://savegame.json` via a `.tmp` file + rename. Never `.tres`.
-- Save `VERSION` is **4**. World generation renames/moves generated provinces,
-  so old saves cannot be rebuilt: `_migrate` returns `{}` for any version that
-  is not the current one and the caller treats that as "no save".
+- Save `VERSION` is **5**. Terrain classification changes which provinces are
+  cities and fortresses, so generated names and ids differ from version 4; old
+  saves cannot be rebuilt. `_migrate` returns `{}` for any version that is not
+  the current one and the caller treats that as "no save".
 - Orders are plain dictionaries (`{"type": "move", ...}`), never Resources or
   actions. Validation happens at queue time, so build orders through
   `queue_move()` / `queue_recruit()`; `resolve_turn()` trusts what it is given.
@@ -439,10 +468,13 @@ governments/laws, End of the World events, Rats faction.
    seed range) before touching numbers; the 20-game sample still has a wide
    confidence interval, and the doctrine rows show how easily a small rule
    swings the result.
-2. Optional: author the tree as a `.tres` in the LimboAI editor instead of
+2. Optional: teach the bot to value province income (coast gold, fortresses)
+   when picking targets. It only compares combat odds today, so the terrain
+   economy does not yet shape its strategy.
+3. Optional: author the tree as a `.tres` in the LimboAI editor instead of
    code, once the shape is stable.
-3. Optional: the main menu still draws a visibly pixelated planet — replace it
+4. Optional: the main menu still draws a visibly pixelated planet — replace it
    with a downscaled render of the generated field, or hide the planet.
-4. Optional: gamepad navigation for the HUD. Buttons are `focus_mode = NONE`
+5. Optional: gamepad navigation for the HUD. Buttons are `focus_mode = NONE`
    today so keyboard shortcuts never steal focus; a controller pass needs focus
    neighbours and a way to keep Space/M working while a button has focus.

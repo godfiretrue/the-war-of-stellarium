@@ -20,6 +20,9 @@ func _initialize() -> void:
 	var cities_min := 1 << 30
 	var cities_max := 0
 	var slowest := 0
+	var terrain_counts := {}
+	for terrain: int in Balance.TERRAIN_NAMES.keys():
+		terrain_counts[terrain] = 0
 
 	var generator := WorldGenerator.new()
 	for index in SEEDS:
@@ -41,9 +44,27 @@ func _initialize() -> void:
 		for anchor in generator.anchors():
 			if not state.has_province(String(anchor["id"])):
 				failures.append("%s: missing anchor %s" % [context, anchor["id"]])
+				continue
+			var anchored := state.get_province(String(anchor["id"]))
+			if anchored.terrain != int(anchor["terrain"]):
+				failures.append("%s: anchor %s has terrain %d, expected %d" % [
+					context, anchor["id"], anchored.terrain, int(anchor["terrain"]),
+				])
+			if bool(anchor.get("fortress", false)) and not anchored.is_fortress:
+				failures.append("%s: anchor %s should be a fortress" % [
+					context, anchor["id"],
+				])
 
 		var cities := 0
 		for province in state.provinces:
+			if not Balance.TERRAIN_NAMES.has(province.terrain):
+				failures.append("%s: %s has invalid terrain %d" % [
+					context, province.id, province.terrain,
+				])
+			else:
+				terrain_counts[province.terrain] = int(terrain_counts[province.terrain]) + 1
+			if province.is_fortress and not province.is_city:
+				failures.append("%s: %s is a fortress but not a city" % [context, province.id])
 			if province.is_city:
 				cities += 1
 			if province.polygon.size() < 3:
@@ -52,6 +73,8 @@ func _initialize() -> void:
 				failures.append("%s: %s has no neighbours" % [context, province.id])
 		cities_min = mini(cities_min, cities)
 		cities_max = maxi(cities_max, cities)
+		if cities != 10:
+			failures.append("%s: %d cities, expected 10" % [context, cities])
 
 		if not _is_connected(state):
 			failures.append("%s: province graph is not connected" % context)
@@ -71,6 +94,12 @@ func _initialize() -> void:
 	print("[sweep] %d worlds, rivers %d-%d, cities %d-%d, slowest %d ms" % [
 		SEEDS, rivers_min, rivers_max, cities_min, cities_max, slowest,
 	])
+	var terrain_parts: PackedStringArray = PackedStringArray()
+	for terrain: int in Balance.TERRAIN_NAMES.keys():
+		terrain_parts.append("%s %d" % [
+			Balance.terrain_name(terrain), int(terrain_counts[terrain]),
+		])
+	print("[sweep] terrain distribution: %s" % ", ".join(terrain_parts))
 	if failures.is_empty():
 		print("[sweep] OK")
 		quit(0)

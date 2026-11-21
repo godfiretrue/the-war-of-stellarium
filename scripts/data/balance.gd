@@ -12,7 +12,8 @@ extends RefCounted
 ## penalty, garrison doctrine); see AI_CONTEXT.md for the 20-game measurements.
 
 enum Faction { NEUTRAL = -1, HUMANS = 0, ELVES = 1 }
-enum Terrain { PLAINS = 0, MOUNTAINS = 1 }
+## MOUNTAINS keeps its old value so nothing that stored the integer breaks.
+enum Terrain { PLAINS = 0, MOUNTAINS = 1, FOREST = 2, COAST = 3 }
 
 const PLAYER_FACTION := Faction.HUMANS
 
@@ -25,19 +26,27 @@ const FACTION_NAMES := {
 const TERRAIN_NAMES := {
 	Terrain.PLAINS: "Plains",
 	Terrain.MOUNTAINS: "Mountains",
+	Terrain.FOREST: "Forest",
+	Terrain.COAST: "Coast",
 }
 
 ## Multiplier applied to a defending army's power, by terrain.
 const TERRAIN_DEFENSE := {
 	Terrain.PLAINS: 1.0,
-	Terrain.MOUNTAINS: 1.25,
+	Terrain.MOUNTAINS: 1.35,
+	Terrain.FOREST: 1.15,
+	Terrain.COAST: 1.0,
 }
 
-## Faction resource produced by each terrain type (Humans mine Aether on
-## Plains, Elves mine Iron in Mountains).
+## Faction resource produced by each terrain type. Humans draw Aether from the
+## lowlands (plains, forest and coast); Elves mine Iron in the mountains.
+## Forest and coast used to be classified as plains, so mapping them to Aether
+## keeps Human resource income unchanged.
 const TERRAIN_RESOURCE := {
 	Terrain.PLAINS: "aether",
 	Terrain.MOUNTAINS: "iron",
+	Terrain.FOREST: "aether",
+	Terrain.COAST: "aether",
 }
 
 const RESOURCE_NAMES := {
@@ -50,11 +59,29 @@ const RESOURCE_NAMES := {
 const STARTING_GOLD := 120
 const STARTING_MANPOWER := 24
 
-const PROVINCE_GOLD_INCOME := 15
-const PROVINCE_MANPOWER_INCOME := 5
+## Base gold and manpower produced by one province of each terrain, before the
+## capital bonus and faction modifiers. The four entries average ~14.5 gold and
+## ~5.5 manpower, close to the old flat 15/5 so the measured balance stays
+## comparable. Coast still leads on gold, plains on manpower, and mountains sit
+## in between with the best defence.
+const TERRAIN_INCOME := {
+	Terrain.PLAINS: {"gold": 13, "manpower": 10},
+	Terrain.FOREST: {"gold": 12, "manpower": 6},
+	Terrain.COAST: {"gold": 20, "manpower": 2},
+	Terrain.MOUNTAINS: {"gold": 19, "manpower": 4},
+}
+
 const CAPITAL_GOLD_BONUS := 8
 const CAPITAL_MANPOWER_BONUS := 2
 const FACTION_RESOURCE_PER_TURN := 2
+
+# --- Fortresses ----------------------------------------------------------
+
+## A fortress is a role on top of the terrain, not a fifth biome. It adds a
+## flat defence bonus and costs gold every turn, so holding one is a real
+## strategic trade-off rather than a free upgrade.
+const FORTRESS_DEFENSE_BONUS := 0.25
+const FORTRESS_UPKEEP_GOLD := 4
 
 ## Per-faction economy modifiers.
 ## gold/manpower: income multipliers. recruit_cost: multiplier on recruitment price.
@@ -185,6 +212,25 @@ static func terrain_name(terrain: int) -> String:
 
 static func terrain_defense(terrain: int) -> float:
 	return float(TERRAIN_DEFENSE.get(terrain, 1.0))
+
+
+## Combined terrain and fortress multiplier for a defending army.
+static func defense_multiplier(terrain: int, is_fortress: bool) -> float:
+	var value := terrain_defense(terrain)
+	if is_fortress:
+		value += FORTRESS_DEFENSE_BONUS
+	return value
+
+
+## Base gold/manpower for one province of this terrain, before the capital
+## bonus and faction modifiers. Returns a fresh dictionary, never the constant
+## table, so callers can add the capital bonus without corrupting Balance.
+static func terrain_income(terrain: int) -> Dictionary:
+	var entry: Dictionary = TERRAIN_INCOME.get(terrain, {})
+	return {
+		"gold": int(entry.get("gold", 15)),
+		"manpower": int(entry.get("manpower", 5)),
+	}
 
 
 static func terrain_resource(terrain: int) -> String:

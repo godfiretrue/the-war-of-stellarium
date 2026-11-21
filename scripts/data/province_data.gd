@@ -11,6 +11,9 @@ extends Resource
 @export var owner_faction: int = Balance.Faction.NEUTRAL
 @export var is_capital: bool = false
 @export var is_city: bool = false
+## A fortress is a role on top of the terrain: it adds a flat defence bonus and
+## costs gold every turn. Generated from the seed, never stored in a save.
+@export var is_fortress: bool = false
 @export var territory_type: String = "Wilderness"
 @export var capital_of: int = Balance.Faction.NEUTRAL
 @export var neighbors: PackedStringArray = PackedStringArray()
@@ -74,8 +77,18 @@ func attack_power() -> float:
 	return power
 
 
+## Base gold and manpower this province produces per turn, before the faction
+## modifiers and the capital-loss penalty (both applied by GameState).
+func base_income() -> Dictionary:
+	var income := Balance.terrain_income(terrain)
+	if is_capital:
+		income["gold"] = int(income["gold"]) + Balance.CAPITAL_GOLD_BONUS
+		income["manpower"] = int(income["manpower"]) + Balance.CAPITAL_MANPOWER_BONUS
+	return income
+
+
 ## Defensive strength of the garrison and the militia, including the terrain
-## multiplier.
+## and fortress multipliers.
 func defense_power() -> float:
 	var power := 0.0
 	for unit_id: String in garrison.keys():
@@ -87,7 +100,7 @@ func defense_power() -> float:
 			power += float(unit.defense) * float(count)
 	if Balance.HOME_GUARD_ENABLED:
 		power += float(maxi(home_guard, 0)) * Balance.HOME_GUARD_DEFENSE
-	return power * Balance.terrain_defense(terrain)
+	return power * Balance.defense_multiplier(terrain, is_fortress)
 
 
 func add_units(unit_id: String, count: int) -> void:

@@ -228,7 +228,7 @@ func _on_visuals_draw() -> void:
 	if data.is_capital:
 		_draw_capital_icon()
 	elif data.is_city:
-		if String(data.territory_type).begins_with("Fortress"):
+		if data.is_fortress:
 			_draw_fortress_icon()
 		else:
 			_draw_town_icon()

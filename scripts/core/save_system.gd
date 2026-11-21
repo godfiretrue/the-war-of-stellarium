@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 4
+const VERSION := 5
 
 
 static func has_save() -> bool:

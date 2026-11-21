@@ -325,6 +325,7 @@ func _refresh_selection() -> void:
 		_name.text = Loc.t("select_province")
 		_name.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
 		_meta.text = ""
+		_meta.tooltip_text = ""
 		_clear_stats()
 		_refresh_garrison(null)
 		return
@@ -350,6 +351,18 @@ func _refresh_selection() -> void:
 	]
 	if province.unrest_turns > 0:
 		_meta.text += " · " + Loc.t("unrest", [province.unrest_turns])
+
+	# Terrain and fortress are the two inputs of the economy and the defence
+	# multiplier, so the dock explains both without adding another text row.
+	var base_income := province.base_income()
+	var terrain_tip := Loc.t("tip_terrain", [
+		int(base_income["gold"]),
+		int(base_income["manpower"]),
+		Balance.defense_multiplier(province.terrain, province.is_fortress),
+	])
+	if province.is_fortress:
+		terrain_tip += "\n" + Loc.t("fortress_upkeep", [Balance.FORTRESS_UPKEEP_GOLD])
+	_meta.tooltip_text = terrain_tip
 
 	var troops := province.total_troops()
 	var militia := province.home_guard if Balance.HOME_GUARD_ENABLED else 0

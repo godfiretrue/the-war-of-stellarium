@@ -15,9 +15,18 @@ signal province_selected(province_id: String)
 
 const PROVINCE_SCENE := preload("res://scenes/map/province.tscn")
 const TERRAIN_SHADER := preload("res://shaders/terrain.gdshader")
+const WATER_SHADER := preload("res://shaders/pixel_water.gdshader")
 const PLAYER := Balance.PLAYER_FACTION
 const WORLD_SIZE := Vector2(1152, 648)
 const DEEP_SEA := Color(0.03, 0.10, 0.20)
+## Palette for the pixel-water layer: deep matches the backdrop, the rest are
+## teal steps towards pale crest and foam.
+const WATER_MID := Color(0.071, 0.353, 0.478)
+const WATER_LIGHT := Color(0.180, 0.561, 0.659)
+const WATER_CREST := Color(0.804, 0.918, 0.949)
+const WATER_SHALLOW := Color(0.310, 0.710, 0.769)
+const WATER_FOAM := Color(0.910, 0.969, 0.980)
+const COAST_FADE_PX := 200.0
 const ROAD_ACTIVE_COLOR := Color(1.0, 0.86, 0.35, 0.80)
 const ARROW_HEAD := 13.0
 const ARROW_TRIM := 36.0
@@ -44,10 +53,20 @@ var _views: Dictionary = {}
 var _hovered_province_id: String = ""
 var _overlay: Node2D
 var _terrain: ColorRect
+var _water: ColorRect
 var _base_scale := Vector2.ONE
+## Last view_zoom pushed to the water shader; avoids setting the same uniform
+## every frame while polling a Camera2D zoom (Camera2D has no zoom signal).
+var _last_water_zoom := -1.0
 var _focus_tween: Tween
 ## Clickable badge rectangles (world space) for queued player orders.
 var _order_hits: Array = []
+
+
+func _process(_delta: float) -> void:
+	# Camera2D exposes no zoom-changed signal; polling is cheap and keeps the
+	# pixel size correct even when a future camera script animates its zoom.
+	_update_water_zoom()
 
 
 func _ready() -> void:
@@ -105,6 +124,7 @@ func _fit_world() -> void:
 	_base_scale = area / WORLD_SIZE
 	scale = _base_scale
 	position = Vector2.ZERO
+	_update_water_zoom()
 
 
 ## The overlay is created in _ready(), but the HUD is a child of this node and
@@ -221,32 +241,82 @@ func refresh_all() -> void:
 
 ## The terrain is one world-sized rectangle painted by a shader that reads the
 ## generator's elevation/moisture image; the MapView transform stretches it to
-## the window.
+## the window. A second, transparent-over-land rectangle paints pixel water on
+## top using the same field image (its alpha holds distance from the coast).
 func _build_terrain() -> void:
+	var world_size := WORLD_SIZE
+	if state != null and state.grid_size.x > 0 and state.grid_size.y > 0 and state.cell_size > 0:
+		world_size = Vector2(state.grid_size) * float(state.cell_size)
+
 	if _terrain == null:
 		_terrain = ColorRect.new()
 		_terrain.name = "Terrain"
-		_terrain.size = WORLD_SIZE
 		_terrain.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_terrain.z_index = -1
+		_terrain.z_index = -2
 		add_child(_terrain)
 		move_child(_terrain, 0)
+	_terrain.size = world_size
+
+	if WATER_SHADER != null and _water == null:
+		_water = ColorRect.new()
+		_water.name = "Water"
+		_water.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_water.z_index = -1
+		add_child(_water)
+		move_child(_water, 1)
+	if _water != null:
+		_water.size = world_size
 
 	if state == null or state.field_image == null:
 		return
 
+	# Both shaders sample the exact same pixels, so one texture is enough.
+	var field_texture := ImageTexture.create_from_image(state.field_image)
 	var material := ShaderMaterial.new()
 	material.shader = TERRAIN_SHADER
-	material.set_shader_parameter("field", ImageTexture.create_from_image(state.field_image))
+	material.set_shader_parameter("field", field_texture)
 	material.set_shader_parameter("grid_size", Vector2(state.grid_size))
-	material.set_shader_parameter("world_size", WORLD_SIZE)
+	material.set_shader_parameter("world_size", world_size)
 	_terrain.material = material
+
+	if _water != null:
+		var water_material := ShaderMaterial.new()
+		water_material.shader = WATER_SHADER
+		water_material.set_shader_parameter("field", field_texture)
+		water_material.set_shader_parameter("world_size", world_size)
+		water_material.set_shader_parameter("sea_level", WorldGenerator.SEA_LEVEL)
+		water_material.set_shader_parameter("depth_range", COAST_FADE_PX)
+		water_material.set_shader_parameter("seed", float(state.map_seed & 0xFFFF))
+		water_material.set_shader_parameter("color_deep", DEEP_SEA)
+		water_material.set_shader_parameter("color_mid", WATER_MID)
+		water_material.set_shader_parameter("color_light", WATER_LIGHT)
+		water_material.set_shader_parameter("color_crest", WATER_CREST)
+		water_material.set_shader_parameter("color_shallow", WATER_SHALLOW)
+		water_material.set_shader_parameter("color_foam", WATER_FOAM)
+		_water.material = water_material
+		_update_water_zoom()
 
 	# The stretched map covers the window, so this only shows through during the
 	# camera focus animation; keep it the same deep blue as the open sea.
 	var backdrop := get_node_or_null("Background/Fill") as ColorRect
 	if backdrop != null:
 		backdrop.color = DEEP_SEA
+
+
+## Keeps one water pixel the same size on screen when the view scale or a
+## Camera2D's zoom changes. The map itself is world-anchored, so water never
+## slides relative to the coast.
+func _update_water_zoom() -> void:
+	var zoom := _base_scale.x
+	var camera := get_viewport().get_camera_2d()
+	if camera != null:
+		zoom *= camera.zoom.x
+	zoom = maxf(zoom, 0.05)
+	if is_equal_approx(zoom, _last_water_zoom):
+		return
+	_last_water_zoom = zoom
+	if _water != null and _water.material != null:
+		(_water.material as ShaderMaterial).set_shader_parameter("view_zoom", zoom)
 
 
 func _build_views() -> void:

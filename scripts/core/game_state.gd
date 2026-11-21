@@ -117,11 +117,9 @@ func income_for(faction: int) -> Dictionary:
 		for province in map_state.provinces_owned_by(faction):
 			if province.unrest_turns > 0:
 				continue
-			gold_income += Balance.PROVINCE_GOLD_INCOME
-			manpower_income += Balance.PROVINCE_MANPOWER_INCOME
-			if province.is_capital:
-				gold_income += Balance.CAPITAL_GOLD_BONUS
-				manpower_income += Balance.CAPITAL_MANPOWER_BONUS
+			var base := province.base_income()
+			gold_income += int(base["gold"])
+			manpower_income += int(base["manpower"])
 			if province.resource_type == resource_key:
 				resource_income += province.resource_per_turn
 
@@ -170,6 +168,8 @@ func upkeep_for(faction: int) -> int:
 		return 0
 	for province in map_state.provinces_owned_by(faction):
 		total += province_upkeep(province)
+		if province.is_fortress:
+			total += Balance.FORTRESS_UPKEEP_GOLD
 	return total
 
 
@@ -213,8 +213,14 @@ func regen_home_guards() -> void:
 	if map_state == null:
 		return
 	for province in map_state.provinces:
-		if not Balance.HOME_GUARD_ENABLED or province.is_neutral():
+		if not Balance.HOME_GUARD_ENABLED:
 			province.home_guard = 0
+			continue
+		# Neutral fortresses keep the initial levy MapFactory gave them; other
+		# neutral ground stays empty. Nothing regenerates for a neutral province.
+		if province.is_neutral():
+			if not province.is_fortress:
+				province.home_guard = 0
 			continue
 		province.home_guard = mini(
 			province.home_guard + Balance.HOME_GUARD_REGEN,
