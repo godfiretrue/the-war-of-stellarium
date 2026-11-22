@@ -6,9 +6,10 @@ extends Node2D
 ## (ownership tint, border, icons), overlay (rivers, march routes, orders).
 ## Game rules stay out of this node.
 ##
-## The whole map is stretched to the window so no strip of the screen is left
-## uncovered at any resolution. Input is converted back into world space, so
-## province hit-testing keeps matching the painted land.
+## The map is fitted to the window at zoom 1, then the player can pan with the
+## middle mouse button and zoom with the wheel. Input is converted back into
+## world space through this node's transform, so province hit-testing keeps
+## matching the painted land at every zoom level.
 
 signal province_clicked(province_id: String)
 signal province_selected(province_id: String)
@@ -31,6 +32,13 @@ const ROAD_ACTIVE_COLOR := Color(1.0, 0.86, 0.35, 0.80)
 const ARROW_HEAD := 13.0
 const ARROW_TRIM := 36.0
 const BADGE_RADIUS := 9.5
+## View controls. Zoom 1 fits the whole world; higher values inspect the map.
+const MIN_ZOOM := 1.0
+const MAX_ZOOM := 4.0
+const ZOOM_STEP := 1.2
+const FOCUS_ZOOM := 1.55
+## Below this zoom only cities keep their names, so a fitted map stays readable.
+const LABEL_ZOOM := 1.35
 ## Recruit orders sit to the left of the army shield and stack upwards, clear
 ## of the castle plate and of the province name below.
 const RECRUIT_BADGE_OFFSET := Vector2(-28, 4)
@@ -55,6 +63,13 @@ var _overlay: Node2D
 var _terrain: ColorRect
 var _water: ColorRect
 var _base_scale := Vector2.ONE
+## Current zoom relative to the fitted view (1.0 = whole world visible).
+var _zoom := 1.0
+## Screen-space offset of the map origin.
+var _pan := Vector2.ZERO
+var _panning := false
+## Last zoom pushed to the province labels, so LOD only updates on change.
+var _last_label_zoom := -1.0
 ## Last view_zoom pushed to the water shader; avoids setting the same uniform
 ## every frame while polling a Camera2D zoom (Camera2D has no zoom signal).
 var _last_water_zoom := -1.0
@@ -67,6 +82,7 @@ func _process(_delta: float) -> void:
 	# Camera2D exposes no zoom-changed signal; polling is cheap and keeps the
 	# pixel size correct even when a future camera script animates its zoom.
 	_update_water_zoom()
+	_update_label_detail()
 
 
 func _ready() -> void:
@@ -98,6 +114,8 @@ func _ready() -> void:
 		turn_manager.start_game()
 
 	state = game.map_state
+	# The state carries the real world size, so fit again now that it is known.
+	_fit_world()
 	_build_terrain()
 	# start_game() may already have emitted state_changed, which builds the
 	# views through _rebuild_views(); never build the province set twice.
@@ -111,20 +129,83 @@ func _ready() -> void:
 		select_province(capital.id)
 
 
-## Stretch the world to the whole window. 16:9 resolutions keep the original
-## proportions; other aspect ratios stretch slightly rather than leaving a band
-## of background beside the sea.
+## Fit the whole world to the window at zoom 1. The map is then panned with
+## the middle mouse button and zoomed with the wheel.
 func _fit_world() -> void:
 	var area := get_viewport().get_visible_rect().size
 	if area.x < 2.0 or area.y < 2.0:
 		return
+	_cancel_focus_tween()
+	_base_scale = area / _world_size()
+	_zoom = MIN_ZOOM
+	_pan = Vector2.ZERO
+	_apply_view()
+
+
+## World size in pixels, read from the generated map and falling back to the
+## fixed MVP size before a game exists.
+func _world_size() -> Vector2:
+	if state != null and state.grid_size.x > 0 and state.grid_size.y > 0 and state.cell_size > 0:
+		return Vector2(state.grid_size) * float(state.cell_size)
+	return WORLD_SIZE
+
+
+## Apply the current zoom and pan to the node transform, then refresh the
+## view-dependent effects (water pixel size and label level of detail).
+func _apply_view() -> void:
+	scale = _base_scale * _zoom
+	position = _pan
+	_update_water_zoom()
+	_update_label_detail()
+
+
+## Zoom relative to the fitted view, derived from the actual node scale so a
+## tween that writes `scale` directly stays consistent.
+func _current_zoom() -> float:
+	if _base_scale.x <= 0.0:
+		return 1.0
+	return scale.x / _base_scale.x
+
+
+## Keep the map covering the viewport: the origin may not move past an edge,
+## and a map smaller than the window is centred.
+func _clamp_pan(candidate: Vector2, view_scale: Vector2) -> Vector2:
+	var area := get_viewport().get_visible_rect().size
+	var map_size := _world_size() * view_scale
+	var result := candidate
+	if map_size.x <= area.x:
+		result.x = (area.x - map_size.x) * 0.5
+	else:
+		result.x = clampf(candidate.x, area.x - map_size.x, 0.0)
+	if map_size.y <= area.y:
+		result.y = (area.y - map_size.y) * 0.5
+	else:
+		result.y = clampf(candidate.y, area.y - map_size.y, 0.0)
+	return result
+
+
+## Cancel the battle-report focus animation, if one is running.
+func _cancel_focus_tween() -> void:
 	if _focus_tween != null:
 		_focus_tween.kill()
 		_focus_tween = null
-	_base_scale = area / WORLD_SIZE
-	scale = _base_scale
-	position = Vector2.ZERO
-	_update_water_zoom()
+
+
+## Read the transform back into the logical zoom/pan state after a tween or a
+## direct scale/position change.
+func _sync_view_state() -> void:
+	_zoom = clampf(_current_zoom(), MIN_ZOOM, MAX_ZOOM)
+	_pan = position
+
+
+## Zoom towards a viewport point, keeping the world point under the cursor in
+## place. The new pan is clamped so no background strip shows.
+func _zoom_at(screen_point: Vector2, target_zoom: float) -> void:
+	var world_point := to_local(screen_point)
+	_zoom = clampf(target_zoom, MIN_ZOOM, MAX_ZOOM)
+	var view_scale := _base_scale * _zoom
+	_pan = _clamp_pan(screen_point - world_point * view_scale, view_scale)
+	_apply_view()
 
 
 ## The overlay is created in _ready(), but the HUD is a child of this node and
@@ -140,9 +221,32 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventMouseMotion:
-		_update_hover(to_local((event as InputEventMouseMotion).position))
+		var motion := event as InputEventMouseMotion
+		if _panning:
+			_pan += motion.relative
+			_pan = _clamp_pan(_pan, scale)
+			position = _pan
+			get_viewport().set_input_as_handled()
+		else:
+			_update_hover(to_local(motion.position))
 	elif event is InputEventMouseButton:
 		var button_event := event as InputEventMouseButton
+		if button_event.button_index == MOUSE_BUTTON_MIDDLE:
+			if button_event.pressed:
+				_cancel_focus_tween()
+				_sync_view_state()
+				_panning = true
+			else:
+				_panning = false
+			get_viewport().set_input_as_handled()
+			return
+		if button_event.pressed and button_event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			_cancel_focus_tween()
+			_sync_view_state()
+			var factor := ZOOM_STEP if button_event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / ZOOM_STEP
+			_zoom_at(button_event.position, _zoom * factor)
+			get_viewport().set_input_as_handled()
+			return
 		if button_event.pressed and button_event.button_index == MOUSE_BUTTON_LEFT:
 			var world_point := to_local(button_event.position)
 			if _try_cancel_badge(world_point):
@@ -215,11 +319,11 @@ func focus_province(province_id: String) -> void:
 	var area := get_viewport().get_visible_rect().size
 	if area.x < 2.0 or area.y < 2.0:
 		return
-	if _focus_tween != null:
-		_focus_tween.kill()
+	_cancel_focus_tween()
 
-	var target_scale := _base_scale * 1.55
+	var target_scale := _base_scale * FOCUS_ZOOM
 	var target_pos := Vector2(area.x * 0.5, area.y * 0.45) - province.map_position * target_scale
+	target_pos = _clamp_pan(target_pos, target_scale)
 	_focus_tween = create_tween()
 	_focus_tween.tween_property(self, "scale", target_scale, 0.30) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
@@ -230,6 +334,7 @@ func focus_province(province_id: String) -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	_focus_tween.parallel().tween_property(self, "position", Vector2.ZERO, 0.45) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	_focus_tween.finished.connect(_sync_view_state)
 
 
 func refresh_all() -> void:
@@ -244,9 +349,7 @@ func refresh_all() -> void:
 ## the window. A second, transparent-over-land rectangle paints pixel water on
 ## top using the same field image (its alpha holds distance from the coast).
 func _build_terrain() -> void:
-	var world_size := WORLD_SIZE
-	if state != null and state.grid_size.x > 0 and state.grid_size.y > 0 and state.cell_size > 0:
-		world_size = Vector2(state.grid_size) * float(state.cell_size)
+	var world_size := _world_size()
 
 	if _terrain == null:
 		_terrain = ColorRect.new()
@@ -307,7 +410,7 @@ func _build_terrain() -> void:
 ## Camera2D's zoom changes. The map itself is world-anchored, so water never
 ## slides relative to the coast.
 func _update_water_zoom() -> void:
-	var zoom := _base_scale.x
+	var zoom := scale.x
 	var camera := get_viewport().get_camera_2d()
 	if camera != null:
 		zoom *= camera.zoom.x
@@ -319,11 +422,25 @@ func _update_water_zoom() -> void:
 		(_water.material as ShaderMaterial).set_shader_parameter("view_zoom", zoom)
 
 
+## Cities keep their names at every zoom; open land only shows them once the
+## player has zoomed in enough to read them without clutter.
+func _update_label_detail() -> void:
+	var zoom := _current_zoom()
+	if is_equal_approx(zoom, _last_label_zoom):
+		return
+	_last_label_zoom = zoom
+	for view_id: String in _views.keys():
+		var view: ProvinceView = _views[view_id]
+		if is_instance_valid(view):
+			view.set_view_zoom(zoom)
+
+
 func _build_views() -> void:
 	for province in state.provinces:
 		var view: ProvinceView = PROVINCE_SCENE.instantiate()
 		add_child(view)
 		view.setup(province)
+		view.set_view_zoom(_current_zoom())
 		# Keep an armed march visible across a state rebuild.
 		var valid := _march_targets.has(province.id)
 		view.set_march_mode(not _march_targets.is_empty(), valid)
@@ -348,6 +465,7 @@ func _on_state_changed() -> void:
 		return
 	if state != game.map_state:
 		state = game.map_state
+		_fit_world()
 		_rebuild_views()
 	else:
 		refresh_all()

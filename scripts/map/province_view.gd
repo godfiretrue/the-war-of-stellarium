@@ -10,6 +10,9 @@ extends Node2D
 
 const RADIUS := 54.0
 const SIDES := 6
+## Below this zoom only cities keep their names; open land labels would clutter
+## a fitted map.
+const LABEL_ZOOM := 1.35
 
 const COLOR_BORDER := Color(0.06, 0.08, 0.12, 0.95)
 const COLOR_BORDER_SELECTED := Color(1.0, 0.86, 0.30, 1.0)
@@ -38,6 +41,8 @@ var _march_target := false
 var _march_mode := false
 var _order_highlight := false
 var _connected_draw := false
+## Current map zoom, used for label level of detail.
+var _view_zoom := 1.0
 
 
 func setup(province: ProvinceData) -> void:
@@ -96,6 +101,8 @@ func refresh() -> void:
 		_name_label.add_theme_color_override("font_color", Color(0.88, 0.91, 0.95))
 		_name_label.add_theme_font_size_override("font_size", 11)
 
+	_update_label_visibility()
+
 	# The troop count is drawn inside the army banner; no text plate is needed.
 	_info_label.text = ""
 	_info_label.visible = false
@@ -110,6 +117,7 @@ func set_selected(value: bool) -> void:
 	if data != null:
 		_fill.color = _province_color()
 	_apply_border()
+	_update_label_visibility()
 	if _visuals != null:
 		_visuals.queue_redraw()
 
@@ -119,6 +127,7 @@ func set_hovered(value: bool) -> void:
 	if data != null:
 		_fill.color = _province_color()
 	_apply_border()
+	_update_label_visibility()
 	if _visuals != null:
 		_visuals.queue_redraw()
 
@@ -149,6 +158,23 @@ func set_order_highlight(active: bool) -> void:
 	_apply_border()
 	if _visuals != null:
 		_visuals.queue_redraw()
+
+
+## Map zoom changed: show every name once the player is close enough, while
+## cities stay named at any zoom.
+func set_view_zoom(value: float) -> void:
+	if is_equal_approx(value, _view_zoom):
+		return
+	_view_zoom = value
+	_update_label_visibility()
+
+
+func _update_label_visibility() -> void:
+	if data == null:
+		_name_label.visible = false
+		return
+	_name_label.visible = data.is_city or _view_zoom >= LABEL_ZOOM \
+		or _selected or _hovered
 
 
 func _apply_border() -> void:
