@@ -21,8 +21,11 @@ extends Node
 @export var bot_faction: int = Balance.Faction.ELVES
 @export var auto_play: bool = true
 
-const MAX_RECRUITS_PER_TURN := 3
-const MAX_BATTLES_PER_TURN := 6
+const BASE_RECRUITS_PER_TURN := 3
+const MAX_RECRUITS_PER_TURN := 18
+const BASE_BATTLES_PER_TURN := 6
+const MAX_BATTLES_PER_TURN := 40
+const REFERENCE_PROVINCES := 21
 const ATTACK_SAFETY_MARGIN := 1.0
 const IMPATIENCE_ROUNDS := 3
 
@@ -115,37 +118,57 @@ func build_behavior_tree() -> BehaviorTree:
 # --- Rule 1: recruit ------------------------------------------------------
 
 func recruit_phase() -> void:
-	var province := _recruitment_province()
-	if province == null:
-		return
-
 	var unit_ids := UnitCatalog.units_for_faction(bot_faction)
 	if unit_ids.is_empty():
 		return
 
-	for _slot in MAX_RECRUITS_PER_TURN:
-		var choice := ""
-		var best_cost := -1
-		for unit_id: String in unit_ids:
-			var unit := UnitCatalog.get_unit(unit_id)
-			if unit == null:
-				continue
-			var costs := game.recruit_costs(bot_faction, unit_id)
-			if not game.can_afford(bot_faction, int(costs["gold"]), int(costs["manpower"])):
-				continue
-			if unit.gold_cost > best_cost:
-				best_cost = unit.gold_cost
-				choice = unit_id
+	# On the reference-size map the capital absorbs every slot, which is the
+	# behaviour the balance table was measured with. Larger maps spread the
+	# same per-turn budget over several cities so reinforcements reach distant
+	# fronts instead of marching from the capital.
+	if game.map_state.province_count() <= REFERENCE_PROVINCES:
+		_recruit_at_capital(unit_ids)
+		return
 
+	var cities := _recruitment_cities()
+	if cities.is_empty():
+		return
+
+	# One unit per city per pass, so a large realm reinforces several fronts.
+	var cap := _recruit_cap()
+	var queued := 0
+	var placed := true
+	while queued < cap and placed:
+		placed = false
+		for province: ProvinceData in cities:
+			if queued >= cap:
+				break
+			var choice := _affordable_unit(unit_ids)
+			if choice.is_empty():
+				return
+			var result := game.queue_recruit(bot_faction, province.id, choice, 1)
+			if result.get("ok", false):
+				queued += 1
+				placed = true
+
+
+## Reference-size behaviour: all slots in one city. The capital recruits while
+## it is held and settled, otherwise the first owned city that is not still in
+## conquest unrest.
+func _recruit_at_capital(unit_ids: Array) -> void:
+	var province := _recruitment_province()
+	if province == null:
+		return
+
+	for _slot in BASE_RECRUITS_PER_TURN:
+		var choice := _affordable_unit(unit_ids)
 		if choice.is_empty():
-			break
+			return
 		var result := game.queue_recruit(bot_faction, province.id, choice, 1)
 		if not result.get("ok", false):
-			break
+			return
 
 
-## The capital recruits while it is held and settled, otherwise the first owned
-## city that is not still in conquest unrest.
 func _recruitment_province() -> ProvinceData:
 	var capital := game.map_state.capital_of(bot_faction)
 	if capital != null and capital.is_owned_by(bot_faction) and capital.unrest_turns <= 0:
@@ -156,6 +179,85 @@ func _recruitment_province() -> ProvinceData:
 		if province.is_city and province.unrest_turns <= 0:
 			return province
 	return null
+
+
+## Owned cities that can recruit, nearest to the enemy first so new units
+## appear where they are needed instead of marching from the capital. Cities
+## that border the enemy are skipped: recruiting straight onto the front line
+## made every turn a free reinforcement and shortened wars drastically.
+func _recruitment_cities() -> Array[ProvinceData]:
+	var safe: Array[ProvinceData] = []
+	var all: Array[ProvinceData] = []
+	for province: ProvinceData in game.map_state.provinces_owned_by(bot_faction):
+		if not province.is_city or province.unrest_turns > 0:
+			continue
+		all.append(province)
+		if not _borders_enemy(province):
+			safe.append(province)
+
+	var cities := safe if not safe.is_empty() else all
+	if cities.size() <= 1:
+		return cities
+
+	var goal := _nearest_enemy_province()
+	if goal == null:
+		return cities
+
+	var map := game.map_state
+	var distances: Dictionary = {goal.id: 0}
+	var frontier: Array[String] = [goal.id]
+	while not frontier.is_empty():
+		var current: String = frontier.pop_front()
+		for neighbor: ProvinceData in map.neighbors_of(current):
+			if distances.has(neighbor.id):
+				continue
+			distances[neighbor.id] = int(distances[current]) + 1
+			frontier.append(neighbor.id)
+
+	cities.sort_custom(func(a: ProvinceData, b: ProvinceData) -> bool:
+		return int(distances.get(a.id, 9999)) < int(distances.get(b.id, 9999))
+	)
+	return cities
+
+
+func _nearest_enemy_province() -> ProvinceData:
+	var enemy := _enemy_faction()
+	var capital := game.map_state.capital_of(enemy)
+	if capital != null and capital.is_owned_by(enemy):
+		return capital
+	for province: ProvinceData in game.map_state.provinces_owned_by(enemy):
+		return province
+	return null
+
+
+## Caps scale with the size of the world, not with conquest: a cap that grew
+## with owned land rewarded the leader and halved game length on the current map.
+func _recruit_cap() -> int:
+	var scale := float(game.map_state.province_count()) / float(REFERENCE_PROVINCES)
+	return clampi(int(round(float(BASE_RECRUITS_PER_TURN) * scale)), BASE_RECRUITS_PER_TURN, MAX_RECRUITS_PER_TURN)
+
+
+func _battle_cap() -> int:
+	var scale := float(game.map_state.province_count()) / float(REFERENCE_PROVINCES)
+	return clampi(int(round(float(BASE_BATTLES_PER_TURN) * scale)), BASE_BATTLES_PER_TURN, MAX_BATTLES_PER_TURN)
+
+
+## Most expensive unit the realm can still afford; buying the strongest unit
+## first keeps the bot's army quality in line with its income.
+func _affordable_unit(unit_ids: Array) -> String:
+	var choice := ""
+	var best_cost := -1
+	for unit_id: String in unit_ids:
+		var unit := UnitCatalog.get_unit(unit_id)
+		if unit == null:
+			continue
+		var costs := game.recruit_costs(bot_faction, unit_id)
+		if not game.can_afford(bot_faction, int(costs["gold"]), int(costs["manpower"])):
+			continue
+		if unit.gold_cost > best_cost:
+			best_cost = unit.gold_cost
+			choice = unit_id
+	return choice
 
 
 # --- Rule 2: attack -------------------------------------------------------
@@ -182,8 +284,9 @@ func attack_phase() -> int:
 ## order per province" rule.
 func _execute_attacks(ignore_odds: bool) -> int:
 	var battles := 0
+	var battle_cap := _battle_cap()
 	for province in game.map_state.provinces_owned_by(bot_faction):
-		if battles >= MAX_BATTLES_PER_TURN:
+		if battles >= battle_cap:
 			break
 		if province.total_troops() <= 0:
 			continue
