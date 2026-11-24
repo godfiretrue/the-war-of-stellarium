@@ -20,6 +20,7 @@ const DOT_SECONDS := 0.35
 var _root: Control
 var _backdrop: ColorRect
 var _content: Control
+var _collapsing: Control
 var _hole: TextureRect
 var _message: Label
 var _base_message := ""
@@ -100,16 +101,20 @@ func collapse_into_hole() -> void:
 	set_process(false)
 	_message.text = _base_message
 
-	# Pivot on the black hole so everything spirals into it instead of shrinking
-	# toward the screen centre.
-	var hole_center: Vector2 = _content.get_global_transform().affine_inverse() * _hole.get_global_rect().get_center()
-	_content.pivot_offset = hole_center
+	# Only the menu/starfield fall in. The hole itself stays put so the player
+	# sees the scene swallowed by it, rather than the whole screen (hole included)
+	# shrinking toward a point.
+	var hole_center: Vector2 = _collapsing.get_global_transform().affine_inverse() * _hole.get_global_rect().get_center()
+	_collapsing.pivot_offset = hole_center
 	if _stage_tween != null:
 		_stage_tween.kill()
 	_stage_tween = create_tween().set_parallel(true)
-	_stage_tween.tween_property(_content, "scale", Vector2(0.02, 0.02), COLLAPSE_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	_stage_tween.tween_property(_content, "rotation", 0.35, COLLAPSE_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	_stage_tween.tween_property(_content, "modulate:a", 0.0, COLLAPSE_SECONDS).set_ease(Tween.EASE_IN)
+	_stage_tween.tween_property(_collapsing, "scale", Vector2(0.02, 0.02), COLLAPSE_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	_stage_tween.tween_property(_collapsing, "rotation", 0.35, COLLAPSE_SECONDS).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	_stage_tween.tween_property(_collapsing, "modulate:a", 0.0, COLLAPSE_SECONDS).set_ease(Tween.EASE_IN)
+	# The hole lingers while everything falls in, then dissolves into the black
+	# backdrop that the new scene is revealed from.
+	_stage_tween.tween_property(_hole, "modulate:a", 0.0, COLLAPSE_SECONDS * 0.35).set_delay(COLLAPSE_SECONDS * 0.65)
 	await _stage_tween.finished
 
 
@@ -130,10 +135,11 @@ func reveal_after_frames(frames: int = 2) -> void:
 func _reset_stage() -> void:
 	if _content == null:
 		return
-	_content.pivot_offset = Vector2.ZERO
-	_content.scale = Vector2.ONE
-	_content.rotation = 0.0
-	_content.modulate.a = 1.0
+	_collapsing.pivot_offset = Vector2.ZERO
+	_collapsing.scale = Vector2.ONE
+	_collapsing.rotation = 0.0
+	_collapsing.modulate.a = 1.0
+	_hole.modulate.a = 1.0
 	_backdrop.modulate.a = 1.0
 
 
@@ -166,20 +172,27 @@ func _build_ui() -> void:
 	_backdrop.color = Color(0.02, 0.025, 0.05, 1.0)
 	_root.add_child(_backdrop)
 
-	# Everything except the backdrop lives here so it can be collapsed into the
-	# black hole as one piece.
+	# Everything except the backdrop lives here.
 	_content = Control.new()
 	_content.name = "Content"
 	_content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_content)
 
+	# Only this layer is sucked into the hole. The hole is a sibling so it can
+	# stay large while the menu falls towards it.
+	_collapsing = Control.new()
+	_collapsing.name = "Collapsing"
+	_collapsing.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_collapsing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_content.add_child(_collapsing)
+
 	var stars := Control.new()
 	stars.name = "Stars"
 	stars.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	stars.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stars.set_script(STARFIELD_SCRIPT)
-	_content.add_child(stars)
+	_collapsing.add_child(stars)
 
 	# Mirrors the title screen: black hole on the right, text on the left.
 	_hole = TextureRect.new()
@@ -203,7 +216,7 @@ func _build_ui() -> void:
 	margin.add_theme_constant_override("margin_top", 40)
 	margin.add_theme_constant_override("margin_right", 24)
 	margin.add_theme_constant_override("margin_bottom", 64)
-	_content.add_child(margin)
+	_collapsing.add_child(margin)
 
 	var column := VBoxContainer.new()
 	column.name = "Column"
