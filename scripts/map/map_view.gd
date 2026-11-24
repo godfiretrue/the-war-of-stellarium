@@ -56,6 +56,10 @@ var _hovered_order: Dictionary = {}
 
 var game: GameState
 var turn_manager: Node
+var _settings: GameSettings
+## Last graphics preset pushed to the shaders, so unrelated Settings changes
+## (language, fullscreen) do not rebuild the map or reset the camera.
+var _last_quality := -1
 
 var _views: Dictionary = {}
 var _hovered_province_id: String = ""
@@ -102,6 +106,7 @@ func _ready() -> void:
 
 	game = get_node_or_null("/root/Game") as GameState
 	turn_manager = get_node_or_null("/root/TurnManager")
+	_settings = get_node_or_null("/root/Settings") as GameSettings
 	if game == null or turn_manager == null:
 		push_error("MapView: Game/TurnManager autoloads are missing")
 		return
@@ -109,6 +114,9 @@ func _ready() -> void:
 	game.state_changed.connect(_on_state_changed)
 	game.orders_changed.connect(_on_orders_changed)
 	turn_manager.phase_changed.connect(_on_phase_changed)
+	if _settings != null:
+		_last_quality = _settings.graphics_quality
+		_settings.changed.connect(_on_settings_changed)
 
 	if not game.is_started():
 		turn_manager.start_game()
@@ -350,6 +358,7 @@ func refresh_all() -> void:
 ## top using the same field image (its alpha holds distance from the coast).
 func _build_terrain() -> void:
 	var world_size := _world_size()
+	var quality := _graphics_quality()
 
 	if _terrain == null:
 		_terrain = ColorRect.new()
@@ -369,6 +378,9 @@ func _build_terrain() -> void:
 		move_child(_water, 1)
 	if _water != null:
 		_water.size = world_size
+		# The animated water pass is the second full-screen shader. Low hides it
+		# and lets the terrain shader's flat sea show instead.
+		_water.visible = quality > GameSettings.QUALITY_LOW
 
 	if state == null or state.field_image == null:
 		return
@@ -380,9 +392,10 @@ func _build_terrain() -> void:
 	material.set_shader_parameter("field", field_texture)
 	material.set_shader_parameter("grid_size", Vector2(state.grid_size))
 	material.set_shader_parameter("world_size", world_size)
+	material.set_shader_parameter("quality", quality)
 	_terrain.material = material
 
-	if _water != null:
+	if _water != null and _water.visible:
 		var water_material := ShaderMaterial.new()
 		water_material.shader = WATER_SHADER
 		water_material.set_shader_parameter("field", field_texture)
@@ -390,6 +403,7 @@ func _build_terrain() -> void:
 		water_material.set_shader_parameter("sea_level", WorldGenerator.SEA_LEVEL)
 		water_material.set_shader_parameter("depth_range", COAST_FADE_PX)
 		water_material.set_shader_parameter("seed", float(state.map_seed & 0xFFFF))
+		water_material.set_shader_parameter("quality", quality)
 		water_material.set_shader_parameter("color_deep", DEEP_SEA)
 		water_material.set_shader_parameter("color_mid", WATER_MID)
 		water_material.set_shader_parameter("color_light", WATER_LIGHT)
@@ -476,6 +490,25 @@ func _on_phase_changed(_phase: int) -> void:
 
 
 func _on_orders_changed() -> void:
+	_redraw_overlay()
+
+
+## Current graphics preset; High when Settings is unavailable (a bare MapView
+## scene opened directly in the editor, for example).
+func _graphics_quality() -> int:
+	if _settings == null:
+		return GameSettings.QUALITY_HIGH
+	return _settings.graphics_quality
+
+
+## A preset change also changes the window's content scale, so re-fit the view
+## and rebuild the shader layers. Language/fullscreen changes are ignored here.
+func _on_settings_changed() -> void:
+	if _settings == null or _settings.graphics_quality == _last_quality:
+		return
+	_last_quality = _settings.graphics_quality
+	_fit_world()
+	_build_terrain()
 	_redraw_overlay()
 
 

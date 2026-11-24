@@ -10,6 +10,10 @@ uniform vec2 grid_size = vec2(288.0, 162.0);
 uniform vec2 world_size = vec2(1152.0, 648.0);
 uniform float sea_level = 0.40;
 uniform vec3 sun = vec3(-0.62, -0.72, 0.48);
+/// 0 = Low (fewest noise layers, no relief gradient), 1 = Medium, 2 = High.
+/// The virtualised GPU this project targets falls over on the full shader at
+/// native resolution, so the graphics preset has to be able to strip it.
+uniform int quality : hint_range(0, 2, 1) = 2;
 
 float hash(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
@@ -25,10 +29,13 @@ float vnoise(vec2 p) {
 			mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-float fbm(vec2 p) {
+float fbm_q(vec2 p, int octaves) {
 	float v = 0.0;
 	float a = 0.5;
 	for (int i = 0; i < 4; i++) {
+		if (i >= octaves) {
+			break;
+		}
 		v += a * vnoise(p);
 		p *= 2.03;
 		a *= 0.5;
@@ -40,6 +47,7 @@ void fragment() {
 	vec2 uv = UV;
 	vec2 px = uv * world_size;
 	vec2 t = 1.0 / grid_size;
+	int octaves = quality >= 2 ? 4 : (quality == 1 ? 3 : 2);
 
 	vec3 sample_field = texture(field, uv).rgb;
 	float e = sample_field.r;
@@ -47,23 +55,39 @@ void fragment() {
 	float temp = sample_field.b;
 
 	// Smoothed gradient over a 2-texel stencil, so the source grid does not
-	// show up as creases in the lighting.
-	float k = 2.0;
-	float e_l = texture(field, uv - vec2(t.x * k, 0.0)).r;
-	float e_r = texture(field, uv + vec2(t.x * k, 0.0)).r;
-	float e_u = texture(field, uv - vec2(0.0, t.y * k)).r;
-	float e_d = texture(field, uv + vec2(0.0, t.y * k)).r;
-	vec2 grad = vec2(e_r - e_l, e_d - e_u) / (2.0 * k);
+	// show up as creases in the lighting. Low skips the four extra taps and
+	// the relief entirely: it is the most expensive part of the shader.
+	vec2 grad = vec2(0.0);
+	if (quality > 0) {
+		float k = 2.0;
+		float e_l = texture(field, uv - vec2(t.x * k, 0.0)).r;
+		float e_r = texture(field, uv + vec2(t.x * k, 0.0)).r;
+		float e_u = texture(field, uv - vec2(0.0, t.y * k)).r;
+		float e_d = texture(field, uv + vec2(0.0, t.y * k)).r;
+		grad = vec2(e_r - e_l, e_d - e_u) / (2.0 * k);
+	}
 
-	float detail = fbm(px * 0.09);
-	float broad = fbm(px * 0.018 + 3.7);
-	float region = fbm(px * 0.032 + 7.1);
+	float detail = 0.5;
+	float broad = 0.5;
+	float region = 0.5;
+	if (quality > 0) {
+		detail = fbm_q(px * 0.09, octaves);
+		broad = fbm_q(px * 0.018 + 3.7, octaves);
+		region = fbm_q(px * 0.032 + 7.1, octaves);
+	}
 	// Two scales of broken rock: ridges get lumpy faces, not smooth slopes.
-	float crag = (fbm(px * 0.55 + 11.0) - 0.5) * 0.12 + (fbm(px * 0.23 + 5.0) - 0.5) * 0.10;
 	// Larger-scale patchiness: bare rock does not cover a slope evenly, and
-	// gullies cut darker lines down the flanks.
-	float rocky = fbm(px * 0.13 + 17.0) * 0.6 + fbm(px * 0.42 + 31.0) * 0.4;
-	float gullies = smoothstep(0.42, 0.78, fbm(px * 0.16 + 41.0));
+	// gullies cut darker lines down the flanks. Both are High-only detail.
+	float crag = 0.0;
+	float rocky = 0.5;
+	float gullies = 0.0;
+	if (quality > 1) {
+		crag = (fbm_q(px * 0.55 + 11.0, octaves) - 0.5) * 0.12
+			+ (fbm_q(px * 0.23 + 5.0, octaves) - 0.5) * 0.10;
+		rocky = fbm_q(px * 0.13 + 17.0, octaves) * 0.6
+			+ fbm_q(px * 0.42 + 31.0, octaves) * 0.4;
+		gullies = smoothstep(0.42, 0.78, fbm_q(px * 0.16 + 41.0, octaves));
+	}
 
 	float steep = clamp(length(grad) * 78.0, 0.0, 1.0);
 	vec2 broken = vec2(crag, crag * 0.7) * (0.55 + steep);
@@ -76,7 +100,9 @@ void fragment() {
 		vec3 shallow = vec3(0.15, 0.40, 0.48);
 		vec3 deep = vec3(0.03, 0.09, 0.18);
 		col = mix(shallow, deep, pow(depth, 0.55));
-		col += (fbm(px * 0.045) - 0.5) * 0.05;
+		if (quality > 0) {
+			col += (fbm_q(px * 0.045, octaves) - 0.5) * 0.05;
+		}
 		// Cold northern water reads greyer and harder.
 		col = mix(col, vec3(0.22, 0.31, 0.38), smoothstep(0.34, 0.14, temp) * 0.40);
 		// The water layer above owns the shoreline foam and shallow shelf, so
@@ -105,7 +131,7 @@ void fragment() {
 		low *= 0.92 + 0.16 * region;
 
 		float forest_weight = smoothstep(0.50, 0.68, mm) * smoothstep(0.16, 0.28, temp);
-		float canopy = fbm(px * 0.42);
+		float canopy = quality > 1 ? fbm_q(px * 0.42, octaves) : 0.5;
 		vec3 woods = mix(forest, taiga, cold) * (0.62 + 0.66 * canopy);
 		low = mix(low, woods, forest_weight);
 

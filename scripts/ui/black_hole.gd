@@ -18,6 +18,9 @@ var _atlas: AtlasTexture
 var _time: float = 0.0
 var _last_frame: int = -1
 var _frame_size: Vector2 = Vector2.ZERO
+var _settings: GameSettings
+var _breath_tween: Tween
+var _breathing := false
 
 
 func _ready() -> void:
@@ -44,7 +47,22 @@ func _ready() -> void:
 	_atlas.filter_clip = true
 	texture = _atlas
 	_show_frame(0)
-	_start_breathing()
+	_settings = get_node_or_null("/root/Settings") as GameSettings
+	if _settings != null:
+		_settings.changed.connect(_apply_quality)
+	_apply_quality()
+
+
+## Low freezes the animation on its first frame and cancels the breathing
+## tween; the spritesheet still sets the mood without redrawing every frame.
+func _apply_quality() -> void:
+	var low := _settings != null and _settings.is_low_quality()
+	set_process(not low)
+	if low:
+		_stop_breathing()
+		_show_frame(0)
+	else:
+		_start_breathing()
 
 
 func _process(delta: float) -> void:
@@ -65,7 +83,18 @@ func _update_pivot() -> void:
 
 
 func _start_breathing() -> void:
-	var tween := create_tween().set_loops()
-	tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	tween.tween_property(self, "scale", Vector2.ONE * breathing_scale, breathing_seconds)
-	tween.tween_property(self, "scale", Vector2.ONE, breathing_seconds)
+	if _breathing:
+		return
+	_breathing = true
+	_breath_tween = create_tween().set_loops()
+	_breath_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_breath_tween.tween_property(self, "scale", Vector2.ONE * breathing_scale, breathing_seconds)
+	_breath_tween.tween_property(self, "scale", Vector2.ONE, breathing_seconds)
+
+
+func _stop_breathing() -> void:
+	_breathing = false
+	if _breath_tween != null:
+		_breath_tween.kill()
+		_breath_tween = null
+	scale = Vector2.ONE

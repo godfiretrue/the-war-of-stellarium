@@ -11,6 +11,9 @@ uniform float depth_range = 200.0;
 /// Screen pixels per world pixel (view scale x camera zoom). Keeps one big
 /// pixel the same on screen at every zoom level.
 uniform float view_zoom = 1.0;
+/// 0 = Low (layer hidden), 1 = Medium (large shapes and foam only),
+/// 2 = High (crests, cloud shadows and sparkles as well).
+uniform int quality : hint_range(0, 2, 1) = 2;
 
 // Size of one big pixel, in screen pixels.
 uniform int pixel_size : hint_range(1, 16, 1) = 4;
@@ -132,21 +135,25 @@ void fragment() {
 
 	// Crest lines in open water only. A smooth ridge keeps them as thin waves
 	// instead of hard-edged white blocks when a water cell covers many pixels.
-	float ridge = 1.0 - smoothstep(0.0,
-			0.020 + 0.045 * crest_amount,
-			abs(flow_noise(bent * 1.6 + 21.0, dir * 3.0, phase) - 0.5));
-	float line = ridge * step(0.50, h);
-	col = coast > 0.40 ? mix(col, color_crest.rgb, line * 0.22 * crest_amount * zoom_detail) : col;
+	if (quality > 1) {
+		float ridge = 1.0 - smoothstep(0.0,
+				0.020 + 0.045 * crest_amount,
+				abs(flow_noise(bent * 1.6 + 21.0, dir * 3.0, phase) - 0.5));
+		float line = ridge * step(0.50, h);
+		col = coast > 0.40 ? mix(col, color_crest.rgb, line * 0.22 * crest_amount * zoom_detail) : col;
+	}
 
 	// Cloud shadows: a big slow noise sampled in continuous world space, with
 	// a soft band and low contrast so it never becomes blocky at any zoom.
-	float cs = flow_noise(smooth_pos * 0.28 + 60.0, dir * 0.5, phase);
-	float shadow_edge = mix(0.85, 0.45, cloud_shadow);
-	float shade = smoothstep(shadow_edge - 0.09, shadow_edge + 0.09, cs);
-	col = mix(col, col * vec3(0.94, 0.96, 0.98), shade * cloud_shadow);
+	if (quality > 1) {
+		float cs = flow_noise(smooth_pos * 0.28 + 60.0, dir * 0.5, phase);
+		float shadow_edge = mix(0.85, 0.45, cloud_shadow);
+		float shade = smoothstep(shadow_edge - 0.09, shadow_edge + 0.09, cs);
+		col = mix(col, col * vec3(0.94, 0.96, 0.98), shade * cloud_shadow);
+	}
 
 	// Sparkles: single pixels that flash for a moment and are gone.
-	if (sparkle_amount > 0.0) {
+	if (quality > 1 && sparkle_amount > 0.0) {
 		float t = fract(phase * 3.0 + hash(cell));
 		float on = step(hash(cell + 17.0), 0.004 * sparkle_amount * 2.0) * step(t, 0.12);
 		col = mix(col, color_foam.rgb, on * 0.35 * zoom_detail);

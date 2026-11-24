@@ -9,6 +9,7 @@ extends Control
 
 var _stars: Array[Dictionary] = []
 var _time: float = 0.0
+var _settings: GameSettings
 
 
 func _ready() -> void:
@@ -26,6 +27,17 @@ func _ready() -> void:
 			"color": Color(0.75 + tint * 0.2, 0.82 + tint * 0.1, 1.0),
 		})
 	resized.connect(queue_redraw)
+	_settings = get_node_or_null("/root/Settings") as GameSettings
+	if _settings != null:
+		_settings.changed.connect(_apply_quality)
+	_apply_quality()
+
+
+## Low keeps the sky but stops redrawing it every frame: the menu is drawn by
+## the same virtualised GPU that renders the campaign.
+func _apply_quality() -> void:
+	set_process(_settings == null or not _settings.is_low_quality())
+	queue_redraw()
 
 
 func _process(delta: float) -> void:

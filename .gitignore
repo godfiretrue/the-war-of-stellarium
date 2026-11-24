@@ -5,3 +5,5 @@
 # LimboAI sample project, kept on disk for reference only
 /demo/
 /.opencode
+.claude/mind.jsonl
+AGENTS.md

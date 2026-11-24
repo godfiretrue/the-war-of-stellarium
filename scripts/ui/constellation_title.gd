@@ -214,6 +214,7 @@ var _stardust: Array[Dictionary] = []
 var _natural: Vector2 = Vector2.ZERO
 var _time: float = 0.0
 var _material: CanvasItemMaterial
+var _settings: GameSettings
 
 
 func _ready() -> void:
@@ -225,6 +226,19 @@ func _ready() -> void:
 	if skip_intro:
 		_settle()
 	update_minimum_size()
+	_settings = get_node_or_null("/root/Settings") as GameSettings
+	if _settings != null:
+		_settings.changed.connect(_apply_quality)
+	_apply_quality()
+
+
+## Low shows the finished constellation and stops the per-frame redraw.
+func _apply_quality() -> void:
+	var low := _settings != null and _settings.is_low_quality()
+	if low:
+		_settle()
+	set_process(not low)
+	queue_redraw()
 
 
 ## Jumps the intro clock past the last star's arrival, so the first draw shows

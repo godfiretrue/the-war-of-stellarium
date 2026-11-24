@@ -88,6 +88,22 @@ vertical_alignment = 1
 layout_mode = 2
 text = ""
 
+[node name="QualityRow" type="HBoxContainer" parent="Center/Panel/Column"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Label" type="Label" parent="Center/Panel/Column/QualityRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.86, 0.88, 0.95, 1)
+theme_override_font_sizes/font_size = 15
+text = "Qualidade gráfica"
+vertical_alignment = 1
+
+[node name="QualityOption" type="OptionButton" parent="Center/Panel/Column/QualityRow"]
+custom_minimum_size = Vector2(150, 38)
+layout_mode = 2
+
 [node name="Note" type="Label" parent="Center/Panel/Column"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.58, 0.61, 0.71, 1)
