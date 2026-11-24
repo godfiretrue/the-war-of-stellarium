@@ -40,7 +40,13 @@ func is_started() -> bool:
 ## Pass a seed to rebuild a specific world (used when loading a save);
 ## a negative seed rolls a new random continent.
 func start_new_game(map_seed: int = -1) -> void:
-	map_state = MapFactory.create_default_map(map_seed)
+	start_new_game_from_map(MapFactory.create_default_map(map_seed))
+
+
+## Starts a game from an already generated and finalized map. The loading
+## screen generates the map on a worker thread and then hands it over here.
+func start_new_game_from_map(state: MapState) -> void:
+	map_state = state
 	gold.clear()
 	manpower.clear()
 	faction_resources.clear()

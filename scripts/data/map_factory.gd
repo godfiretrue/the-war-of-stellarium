@@ -9,6 +9,16 @@ extends RefCounted
 
 ## Pass a negative seed for a fresh random world.
 static func create_default_map(map_seed: int = -1) -> MapState:
+	var state := generate_map_data(map_seed)
+	if state == null:
+		return MapState.new()
+	return finalize_map(state)
+
+
+## Pure world generation, safe to run on a worker thread: it only builds data
+## resources and never touches the scene tree. Call finalize_map() afterwards on
+## the main thread.
+static func generate_map_data(map_seed: int = -1) -> MapState:
 	var world_seed := map_seed
 	if world_seed < 0:
 		var rng := RandomNumberGenerator.new()
@@ -19,6 +29,14 @@ static func create_default_map(map_seed: int = -1) -> MapState:
 	var state := generator.build(world_seed)
 	if state == null:
 		push_error("MapFactory: world generation failed for seed %d" % world_seed)
+		return null
+	return state
+
+
+## Main-thread half of map creation: starting armies, garrisons and validation.
+## Keeping this separate lets the expensive generation run in a Thread.
+static func finalize_map(state: MapState) -> MapState:
+	if state == null:
 		return MapState.new()
 
 	_apply_starting_armies(state)

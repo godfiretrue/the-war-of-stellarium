@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 Settings="*res://scripts/core/settings.gd"
 Game="*res://scripts/core/game_state.gd"
 TurnManager="*res://scripts/core/turn_manager.gd"
+LoadingScreen="*res://scripts/ui/loading_screen.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]

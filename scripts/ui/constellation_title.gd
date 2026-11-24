@@ -203,6 +203,9 @@ const STELLAR_GOLD := Color(1.0, 0.92, 0.74, 1.0)
 @export var intro_seconds: float = 2.2
 @export var start_delay: float = 0.3
 @export var seed_value: int = 42
+## When true the constellation is already assembled on the first frame. The
+## loading screen uses this so it does not replay the menu's title animation.
+@export var skip_intro: bool = false
 
 # Internal state
 var _segments: Array[Dictionary] = []
@@ -219,7 +222,19 @@ func _ready() -> void:
 	_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	material = _material
 	_build()
+	if skip_intro:
+		_settle()
 	update_minimum_size()
+
+
+## Jumps the intro clock past the last star's arrival, so the first draw shows
+## the finished constellation with no convergence and no arrival flashes.
+func _settle() -> void:
+	var settle := start_delay
+	for star: Dictionary in _stars:
+		var arrived := start_delay + float(star["arrive_delay"]) + float(star["flight_duration"])
+		settle = maxf(settle, arrived)
+	_time = settle + 0.5
 
 
 func _get_minimum_size() -> Vector2:

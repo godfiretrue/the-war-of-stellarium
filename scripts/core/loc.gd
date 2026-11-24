@@ -143,6 +143,8 @@ const STRINGS := {
 		"settings": "Definições",
 		"saved_available": "Há uma campanha gravada disponível.",
 		"load_failed": "Não foi possível carregar: %s",
+		"world_failed": "Não foi possível gerar o mundo.",
+		"loading_world": "A gerar o continente",
 
 		# --- Game over --------------------------------------------------
 		"victory": "Vitória",
@@ -288,6 +290,8 @@ const STRINGS := {
 		"settings": "Settings",
 		"saved_available": "A saved campaign is available.",
 		"load_failed": "Could not load save: %s",
+		"world_failed": "Could not generate the world.",
+		"loading_world": "Generating the continent",
 
 		# --- Game over --------------------------------------------------
 		"victory": "Victory",

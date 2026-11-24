@@ -60,10 +60,23 @@ static func save_game(game: GameState, turn_number: int) -> bool:
 
 ## Loads a save into GameState. Returns {ok, reason, turn}.
 static func load_game(game: GameState) -> Dictionary:
-	if not has_save():
-		return {"ok": false, "reason": "no save file"}
+	var result := read_save()
+	if not bool(result.get("ok", false)):
+		return result
 	if game == null:
 		return {"ok": false, "reason": "game state missing"}
+
+	var data: Dictionary = result["data"]
+	game.start_new_game(int(data.get("map_seed", 0)))
+	apply_save(game, data)
+	return {"ok": true, "turn": int(data.get("turn_number", 1))}
+
+
+## Reads and validates the save file without generating a map. The loading
+## screen uses the seed to build the world on a worker thread.
+static func read_save() -> Dictionary:
+	if not has_save():
+		return {"ok": false, "reason": "no save file"}
 
 	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if file == null:
@@ -80,12 +93,17 @@ static func load_game(game: GameState) -> Dictionary:
 	if data.is_empty():
 		return {"ok": false, "reason": "unsupported save version"}
 
-	game.start_new_game(int(data.get("map_seed", 0)))
+	return {"ok": true, "data": data, "turn": int(data.get("turn_number", 1))}
+
+
+## Applies a save read by read_save() to a game whose map was rebuilt from the
+## saved seed. Split from load_game so the map generation can run in a thread.
+static func apply_save(game: GameState, data: Dictionary) -> void:
+	if game == null:
+		return
 	_apply_factions(game, data.get("factions", {}))
 	_apply_provinces(game, data.get("provinces", []))
 	game.state_changed.emit()
-
-	return {"ok": true, "turn": int(data.get("turn_number", 1))}
 
 
 ## Brings older saves up to the current version. Empty dictionary means the
