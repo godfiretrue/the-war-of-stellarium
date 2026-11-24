@@ -104,7 +104,7 @@ static func apply_menu_button(button: Button) -> void:
 	button.add_theme_color_override("font_disabled_color", TEXT_DISABLED)
 	button.add_theme_stylebox_override("normal", box(Color(0.08, 0.09, 0.16, 0.55), Color(0.3, 0.33, 0.5, 0.6)))
 	button.add_theme_stylebox_override("hover", box(Color(0.16, 0.18, 0.36, 0.8), ACCENT))
-	button.add_theme_stylebox_override("focus", box(Color(0.16, 0.18, 0.36, 0.8), ACCENT))
+	button.add_theme_stylebox_override("focus", box(Color(0.16, 0.18, 0.36, 0.8), GOLD))
 	button.add_theme_stylebox_override("pressed", box(Color(0.22, 0.25, 0.5, 0.9), Color.WHITE))
 	button.add_theme_stylebox_override("disabled", box(Color(0.06, 0.07, 0.11, 0.4), Color(0.2, 0.21, 0.28, 0.5)))
 

@@ -22,6 +22,7 @@ var _loading_state: MapState
 var _loading_started_ms := 0
 var _loading_continue := false
 var _loading_save: Dictionary = {}
+var _intro_tween: Tween
 
 @onready var _new_game: Button = %NewGame
 @onready var _continue: Button = %Continue
@@ -37,6 +38,12 @@ var _loading_save: Dictionary = {}
 func _ready() -> void:
 	# A Control scene root does not size itself to the window; do it explicitly.
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	# A menu is flat UI: rendering it at the native window size buys no detail
+	# but multiplies the cost of every full-screen gradient and additive draw
+	# call. Render it at the authored canvas even on High; the map restores the
+	# player's preset when the scene changes.
+	_settings.apply_render_mode(true)
 
 	for button: Button in [_new_game, _continue, _settings_button, _quit]:
 		UiStyle.apply_menu_button(button)
@@ -54,12 +61,25 @@ func _ready() -> void:
 	_settings_button.pressed.connect(_open_settings)
 	_quit.pressed.connect(_on_quit)
 	_settings_panel.closed.connect(_on_settings_closed)
-	_settings.changed.connect(_retranslate)
+	_settings.changed.connect(_on_settings_changed)
 
 	_continue.disabled = not SaveSystem.has_save()
 	_retranslate()
+	_refresh_focus_chain()
 	_new_game.grab_focus()
 	set_process(false)
+
+
+func _on_settings_changed() -> void:
+	_retranslate()
+	# set_quality() reapplies the saved preset; keep the menu on the cheap canvas.
+	_settings.apply_render_mode(true)
+	# Turning animations off mid-intro should settle the fade immediately.
+	if not _settings.menu_animations_enabled() \
+		and _intro_tween != null and _intro_tween.is_running():
+		_intro_tween.kill()
+		_black_hole.modulate.a = 1.0
+		_menu_column.modulate.a = 1.0
 
 
 func _retranslate() -> void:
@@ -72,6 +92,7 @@ func _retranslate() -> void:
 
 func _update_status() -> void:
 	_status.text = Loc.t("saved_available") if SaveSystem.has_save() else ""
+	_refresh_focus_chain()
 
 
 func _open_settings() -> void:
@@ -182,6 +203,9 @@ func _enter_map() -> void:
 	# first, the scene swaps behind the black, then the black fades away.
 	if screen != null:
 		await screen.collapse_into_hole()
+	# The campaign does need High's native resolution; restore the saved preset
+	# before the scene swap so MapView renders at full detail from frame one.
+	_settings.apply_render_mode(false)
 	var error := tree.change_scene_to_file("res://scenes/map/map.tscn")
 	if error != OK:
 		_fail_loading(Loc.t("world_failed"))
@@ -207,6 +231,31 @@ func _set_busy(busy: bool) -> void:
 	_continue.disabled = busy or not SaveSystem.has_save()
 	_settings_button.disabled = busy
 	_quit.disabled = busy
+	_refresh_focus_chain()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if _loading or _settings_panel.visible:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_open_settings()
+		get_viewport().set_input_as_handled()
+
+
+## Keeps Tab / D-pad walking only through buttons that can actually be pressed.
+## Godot uses focus_next/focus_previous NodePaths as the explicit neighbour
+## chain; disabled buttons are left out so a gamepad never lands on one.
+func _refresh_focus_chain() -> void:
+	var chain: Array[Control] = []
+	for button: Button in [_new_game, _continue, _settings_button, _quit]:
+		button.focus_mode = Control.FOCUS_NONE if button.disabled else Control.FOCUS_ALL
+		if not button.disabled:
+			chain.append(button)
+	if chain.is_empty():
+		return
+	for i in chain.size():
+		chain[i].focus_next = chain[(i + 1) % chain.size()].get_path()
+		chain[i].focus_previous = chain[(i - 1 + chain.size()) % chain.size()].get_path()
 
 
 ## The menu can be freed by a scene change while the worker thread is still
@@ -222,10 +271,16 @@ func _on_quit() -> void:
 
 
 ## Black hole fades in first, then the menu column fades in just after it.
+## With menu animations off, both are visible immediately instead.
 func _play_intro() -> void:
+	if not _settings.menu_animations_enabled():
+		_black_hole.modulate.a = 1.0
+		_menu_column.modulate.a = 1.0
+		return
+
 	_black_hole.modulate.a = 0.0
 	_menu_column.modulate.a = 0.0
 
-	var tween := create_tween()
-	tween.tween_property(_black_hole, "modulate:a", 1.0, 1.6)
-	tween.parallel().tween_property(_menu_column, "modulate:a", 1.0, 1.0).set_delay(0.5)
+	_intro_tween = create_tween()
+	_intro_tween.tween_property(_black_hole, "modulate:a", 1.0, 1.6)
+	_intro_tween.parallel().tween_property(_menu_column, "modulate:a", 1.0, 1.0).set_delay(0.5)

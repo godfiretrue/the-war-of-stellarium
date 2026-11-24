@@ -15,6 +15,9 @@ signal changed
 const PATH := "user://settings.cfg"
 const LANGUAGES: Array[String] = ["pt", "en"]
 const DEFAULT_LANGUAGE := "pt"
+## Menu ambience starts on. The setting is about CPU/GPU cost and motion
+## sensitivity, not about the saved graphics preset.
+const DEFAULT_MENU_ANIMATIONS := true
 
 ## Graphics presets. Low renders the campaign at the 1152x648 design resolution
 ## and strips the expensive shader layers; High renders at the native window
@@ -33,6 +36,7 @@ const BASE_SIZE := Vector2i(1152, 648)
 
 var language: String = DEFAULT_LANGUAGE
 var fullscreen := false
+var menu_animations := DEFAULT_MENU_ANIMATIONS
 ## -1 means "not chosen yet": _ready() picks a preset from the video adapter.
 var graphics_quality: int = -1
 
@@ -46,6 +50,7 @@ func load_settings() -> void:
 	if config.load(PATH) == OK:
 		language = String(config.get_value("ui", "language", language))
 		fullscreen = bool(config.get_value("ui", "fullscreen", fullscreen))
+		menu_animations = bool(config.get_value("ui", "menu_animations", menu_animations))
 		graphics_quality = int(config.get_value("video", "quality", graphics_quality))
 
 	if not LANGUAGES.has(language):
@@ -54,13 +59,14 @@ func load_settings() -> void:
 		graphics_quality = _detect_quality()
 	Loc.language = language
 	_apply_fullscreen(fullscreen)
-	_apply_render_mode()
+	apply_render_mode()
 
 
 func save_settings() -> void:
 	var config := ConfigFile.new()
 	config.set_value("ui", "language", language)
 	config.set_value("ui", "fullscreen", fullscreen)
+	config.set_value("ui", "menu_animations", menu_animations)
 	config.set_value("video", "quality", graphics_quality)
 	config.save(PATH)
 
@@ -87,12 +93,26 @@ func toggle_fullscreen() -> void:
 	set_fullscreen(not fullscreen)
 
 
+func set_menu_animations(value: bool) -> void:
+	if value == menu_animations:
+		return
+	menu_animations = value
+	save_settings()
+	changed.emit()
+
+
+## The Low preset strips animation on its own for performance, so it overrides
+## the player's choice. Everything else follows the saved setting.
+func menu_animations_enabled() -> bool:
+	return menu_animations and not is_low_quality()
+
+
 func set_quality(value: int) -> void:
 	value = clampi(value, QUALITY_MIN, QUALITY_MAX)
 	if value == graphics_quality:
 		return
 	graphics_quality = value
-	_apply_render_mode()
+	apply_render_mode()
 	save_settings()
 	changed.emit()
 
@@ -117,7 +137,12 @@ func _detect_quality() -> int:
 
 ## Low and Medium render the 2D tree at the authored 1152x648 canvas and let the
 ## GPU/driver upscale it. High renders at the real window resolution.
-func _apply_render_mode() -> void:
+##
+## Screens made of mostly flat UI (the main menu) have no detail to gain from
+## native resolution, but pay for it on a virtual/software GPU. They can pass
+## `force_viewport` to render at the authored canvas without changing the
+## player's saved preset; the campaign keeps the full High render.
+func apply_render_mode(force_viewport: bool = false) -> void:
 	# The headless test runner has no window; touching the root's content scale
 	# is pointless there and can print errors.
 	if DisplayServer.get_name() == "headless":
@@ -126,7 +151,7 @@ func _apply_render_mode() -> void:
 	if tree == null or tree.root == null:
 		return
 	var root := tree.root
-	if graphics_quality == QUALITY_HIGH:
+	if graphics_quality == QUALITY_HIGH and not force_viewport:
 		root.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
 	else:

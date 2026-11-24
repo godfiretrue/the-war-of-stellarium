@@ -203,8 +203,9 @@ const STELLAR_GOLD := Color(1.0, 0.92, 0.74, 1.0)
 @export var intro_seconds: float = 2.2
 @export var start_delay: float = 0.3
 @export var seed_value: int = 42
-## When true the constellation is already assembled on the first frame. The
-## loading screen uses this so it does not replay the menu's title animation.
+## Kept for the loading screen, which sets it to true. The constellation is
+## always drawn in its settled state now: redrawing its ~600 additive shapes
+## every frame costs more than a whole frame on a software GPU.
 @export var skip_intro: bool = false
 
 # Internal state
@@ -214,7 +215,6 @@ var _stardust: Array[Dictionary] = []
 var _natural: Vector2 = Vector2.ZERO
 var _time: float = 0.0
 var _material: CanvasItemMaterial
-var _settings: GameSettings
 
 
 func _ready() -> void:
@@ -223,21 +223,10 @@ func _ready() -> void:
 	_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	material = _material
 	_build()
-	if skip_intro:
-		_settle()
+	# Draw once in the final state. The menu column tween still fades the title
+	# in, so the intro keeps its presentation without per-frame redraws.
+	_settle()
 	update_minimum_size()
-	_settings = get_node_or_null("/root/Settings") as GameSettings
-	if _settings != null:
-		_settings.changed.connect(_apply_quality)
-	_apply_quality()
-
-
-## Low shows the finished constellation and stops the per-frame redraw.
-func _apply_quality() -> void:
-	var low := _settings != null and _settings.is_low_quality()
-	if low:
-		_settle()
-	set_process(not low)
 	queue_redraw()
 
 
@@ -253,11 +242,6 @@ func _settle() -> void:
 
 func _get_minimum_size() -> Vector2:
 	return _natural + Vector2(PAD * 2.0, PAD * 2.0)
-
-
-func _process(delta: float) -> void:
-	_time += delta
-	queue_redraw()
 
 
 # --- Constellation Builder -----------------------------------------------
