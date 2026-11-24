@@ -111,18 +111,23 @@ static func apply_menu_button(button: Button) -> void:
 
 ## Compact HUD button: same language as the menu, tighter padding.
 static func apply_hud_button(button: Button) -> void:
-	button.focus_mode = Control.FOCUS_NONE
+	# Focusable so a gamepad (or Tab) can reach the HUD. The focus stylebox
+	# makes that focus visible instead of relying on the default theme.
+	button.focus_mode = Control.FOCUS_ALL
 	button.add_theme_color_override("font_color", TEXT)
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_focus_color", Color.WHITE)
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 	button.add_theme_color_override("font_disabled_color", TEXT_DISABLED)
 	button.add_theme_font_size_override("font_size", 12)
 	var normal := box(Color(0.09, 0.10, 0.17, 0.90), Color(0.26, 0.29, 0.45, 0.9), 3, 12.0, 6.0)
 	var hover := box(Color(0.16, 0.18, 0.33, 0.95), ACCENT, 3, 12.0, 6.0)
+	var focus := box(Color(0.16, 0.18, 0.33, 0.95), GOLD, 3, 12.0, 6.0)
 	var pressed := box(Color(0.22, 0.25, 0.48, 0.95), Color.WHITE, 3, 12.0, 6.0)
 	var disabled := box(Color(0.06, 0.07, 0.11, 0.55), Color(0.18, 0.19, 0.26, 0.7), 3, 12.0, 6.0)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("focus", focus)
 	button.add_theme_stylebox_override("pressed", pressed)
 	button.add_theme_stylebox_override("disabled", disabled)
 

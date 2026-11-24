@@ -98,6 +98,7 @@ func _ready() -> void:
 
 	_style()
 	_connect_signals()
+	_setup_focus_neighbors()
 	_build_menu()
 
 	_battle_card.visible = false
@@ -139,6 +140,32 @@ func _connect_signals() -> void:
 	_battle_dismiss.pressed.connect(_dismiss_battles)
 	_settings_panel.closed.connect(_on_settings_closed)
 	_end_turn.resized.connect(_on_end_turn_resized)
+
+
+# --- Focus navigation ----------------------------------------------------
+
+## HUD buttons are focusable so a gamepad (or Tab) can move between them.
+## Explicit neighbours keep that movement predictable: the buttons form a
+## clockwise loop around the screen instead of jumping to whichever control
+## happens to be geometrically closest. Godot skips hidden neighbours, so the
+## orders/battle cards simply drop out of the loop while they are collapsed.
+func _setup_focus_neighbors() -> void:
+	var loop: Array[Control] = [
+		_menu_button,      # top right
+		_battle_dismiss,   # battle card, right edge
+		_end_turn,         # bottom right
+		_march,            # bottom centre
+		_recruit_b,
+		_recruit_a,        # bottom left-centre
+		_orders_tab,       # left edge
+		_orders_collapse,  # orders card, left edge
+	]
+	for index in loop.size():
+		var button: Control = loop[index]
+		var previous: Control = loop[(index - 1 + loop.size()) % loop.size()]
+		var following: Control = loop[(index + 1) % loop.size()]
+		button.focus_neighbor_left = previous.get_path()
+		button.focus_neighbor_right = following.get_path()
 
 
 # --- Look ----------------------------------------------------------------
@@ -807,9 +834,10 @@ func _selected_province() -> ProvinceData:
 
 # --- Keyboard ------------------------------------------------------------
 
-## Shortcuts are read here instead of on the buttons: HUD buttons have
-## focus_mode NONE, so a focused button can never swallow Space.
-func _unhandled_key_input(event: InputEvent) -> void:
+## Shortcuts are read in _input, before the GUI gets the event. A focused HUD
+## button would otherwise consume Space/Enter and the shortcut would be lost;
+## marking the key handled also stops that button from acting on it twice.
+func _input(event: InputEvent) -> void:
 	if event is not InputEventKey or not event.pressed or event.echo:
 		return
 	if _settings_panel != null and _settings_panel.visible:
