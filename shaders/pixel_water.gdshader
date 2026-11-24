@@ -79,18 +79,21 @@ void fragment() {
 	vec2 world_px = UV * world_size;
 	float px = float(pixel_size) / max(view_zoom, 0.05);
 	vec2 cell = floor(world_px / px);
-	vec2 pos = (cell + 0.5) * px / 128.0 * scale;
+	// The big colour shapes sample continuous world pixels. Sampling the
+	// quantised cell position instead gave every water block one flat shade,
+	// which reads as large pale/dark squares when the camera is zoomed out.
+	vec2 smooth_pos = world_px / 128.0 * scale;
 	float phase = TIME * speed;
 	vec2 dir = vec2(cos(flow_angle), sin(flow_angle));
 
 	// First layer bends the second one, so the waves look pushed around.
-	float warp = flow_noise(pos * 0.5 + 5.0, dir, phase) - 0.5;
-	vec2 bent = pos + vec2(warp, -warp) * turbulence * 1.5;
+	float warp = flow_noise(smooth_pos * 0.5 + 5.0, dir, phase) - 0.5;
+	vec2 bent = smooth_pos + vec2(warp, -warp) * turbulence * 1.5;
 	// Big soft shapes pick the shade of the water.
 	float h = flow_noise(bent * 0.8, dir, phase) * 0.75
 		+ flow_noise(bent * 1.7 + 9.0, dir * 2.0, phase) * 0.25;
 	// Long swells: wide bands of lighter and darker water rolling along the flow.
-	h += swell * 0.09 * sin(dot(pos, dir) * 4.0 - phase * 6.2831853 + warp * 4.0);
+	h += swell * 0.09 * sin(dot(smooth_pos, dir) * 4.0 - phase * 6.2831853 + warp * 4.0);
 	h += depth;
 
 	// Smooth blends instead of hard threshold bands: the big open-water areas
@@ -102,7 +105,7 @@ void fragment() {
 	// depth_range pixels. The shelf is a narrow, soft tint that hugs the coast:
 	// no bright cyan ring and no stack of quantised bands.
 	float coast = clamp(f.a * (200.0 / max(depth_range, 1.0)), 0.0, 1.0);
-	float coast_noise = flow_noise(pos * 1.35 + 37.0, dir, phase) - 0.5;
+	float coast_noise = flow_noise(smooth_pos * 1.35 + 37.0, dir, phase) - 0.5;
 	float shore = 1.0 - smoothstep(0.0, 0.07, coast);
 	float band = clamp(shore + coast_noise * 0.04, 0.0, 1.0);
 	vec3 coast_col = mix(color_mid.rgb, color_light.rgb, smoothstep(0.15, 0.80, band));
@@ -111,7 +114,7 @@ void fragment() {
 	// Foam is a thin, sparse waterline fleck. A higher frequency than the waves
 	// keeps it from merging into a solid white border around every province.
 	float foam_band = 1.0 - smoothstep(0.0, 0.012, coast);
-	float foam_noise = flow_noise(pos * 5.0 + 51.0, dir, phase * 1.3);
+	float foam_noise = flow_noise(smooth_pos * 5.0 + 51.0, dir, phase * 1.3);
 	float foam = foam_band * smoothstep(0.72, 0.92, foam_noise) * foam_width;
 	col = mix(col, color_foam.rgb, foam * 0.22);
 
@@ -119,7 +122,7 @@ void fragment() {
 	float wave_pos = fract(coast * 36.0 - phase * 1.4 + coast_noise * 0.8);
 	float lap_band = 1.0 - smoothstep(0.0, 0.055, coast);
 	float lap = smoothstep(0.18, 0.0, wave_pos) * lap_band;
-	lap *= smoothstep(0.50, 0.80, flow_noise(pos * 3.0 + 7.0, dir, phase * 1.1));
+	lap *= smoothstep(0.50, 0.80, flow_noise(smooth_pos * 3.0 + 7.0, dir, phase * 1.1));
 	col = mix(col, color_foam.rgb, lap * 0.12);
 
 	// Fine detail only appears once the camera is close enough for it to read.
@@ -127,15 +130,20 @@ void fragment() {
 	// and glints would become isolated white blocks instead of waves.
 	float zoom_detail = smoothstep(0.9, 1.6, view_zoom);
 
-	// Crest lines in open water only, soft enough not to become white blocks.
-	float line = step(abs(flow_noise(bent * 1.6 + 21.0, dir * 3.0, phase) - 0.5),
-			0.030 * crest_amount * 2.0) * step(0.50, h);
-	col = coast > 0.40 ? mix(col, color_crest.rgb, line * 0.35 * zoom_detail) : col;
+	// Crest lines in open water only. A smooth ridge keeps them as thin waves
+	// instead of hard-edged white blocks when a water cell covers many pixels.
+	float ridge = 1.0 - smoothstep(0.0,
+			0.020 + 0.045 * crest_amount,
+			abs(flow_noise(bent * 1.6 + 21.0, dir * 3.0, phase) - 0.5));
+	float line = ridge * step(0.50, h);
+	col = coast > 0.40 ? mix(col, color_crest.rgb, line * 0.22 * crest_amount * zoom_detail) : col;
 
-	// Cloud shadows: a big slow noise; where it is high, water drops a shade.
-	float cs = flow_noise(pos * 0.28 + 60.0, dir * 0.5, phase);
-	float shade = step(mix(0.85, 0.45, cloud_shadow), cs);
-	col = mix(col, col * vec3(0.88, 0.91, 0.96), shade);
+	// Cloud shadows: a big slow noise sampled in continuous world space, with
+	// a soft band and low contrast so it never becomes blocky at any zoom.
+	float cs = flow_noise(smooth_pos * 0.28 + 60.0, dir * 0.5, phase);
+	float shadow_edge = mix(0.85, 0.45, cloud_shadow);
+	float shade = smoothstep(shadow_edge - 0.09, shadow_edge + 0.09, cs);
+	col = mix(col, col * vec3(0.94, 0.96, 0.98), shade * cloud_shadow);
 
 	// Sparkles: single pixels that flash for a moment and are gone.
 	if (sparkle_amount > 0.0) {
