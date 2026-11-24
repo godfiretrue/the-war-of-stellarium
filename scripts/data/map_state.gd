@@ -10,6 +10,9 @@ extends Resource
 ## Render-only data produced by WorldGenerator (rebuilt from the seed, never
 ## saved): the seed itself is what saves store.
 var map_seed: int = 0
+## 1.0 is the reference world (21 provinces); 2.0 is the large campaign map.
+## Saves store it so a world is always rebuilt at the size it was created.
+var world_scale: float = 1.0
 var rivers: Array[PackedVector2Array] = []
 ## Drawing width in pixels for each river, parallel to `rivers`.
 var river_widths: PackedFloat32Array = PackedFloat32Array()

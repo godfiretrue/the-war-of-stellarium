@@ -26,6 +26,7 @@ const MAX_RECRUITS_PER_TURN := 18
 const BASE_BATTLES_PER_TURN := 6
 const MAX_BATTLES_PER_TURN := 40
 const REFERENCE_PROVINCES := 21
+const CAP_EXPONENT := 0.9
 const ATTACK_SAFETY_MARGIN := 1.0
 const IMPATIENCE_ROUNDS := 3
 
@@ -230,16 +231,33 @@ func _nearest_enemy_province() -> ProvinceData:
 	return null
 
 
-## Caps scale with the size of the world, not with conquest: a cap that grew
-## with owned land rewarded the leader and halved game length on the current map.
+## Caps grow sublinearly with the world's area. Linear growth gave twelve
+## recruits on the 84-province map and a 90/10 Human snowball; sqrt gave six
+## and a 0/20 Elve sweep. The exponent in between keeps both factions' unit
+## costs and incomes relevant on every map size.
 func _recruit_cap() -> int:
-	var scale := float(game.map_state.province_count()) / float(REFERENCE_PROVINCES)
-	return clampi(int(round(float(BASE_RECRUITS_PER_TURN) * scale)), BASE_RECRUITS_PER_TURN, MAX_RECRUITS_PER_TURN)
+	return _scaled_cap(BASE_RECRUITS_PER_TURN, MAX_RECRUITS_PER_TURN)
 
 
 func _battle_cap() -> int:
-	var scale := float(game.map_state.province_count()) / float(REFERENCE_PROVINCES)
-	return clampi(int(round(float(BASE_BATTLES_PER_TURN) * scale)), BASE_BATTLES_PER_TURN, MAX_BATTLES_PER_TURN)
+	return _scaled_cap(BASE_BATTLES_PER_TURN, MAX_BATTLES_PER_TURN)
+
+
+## The ideal cap is rarely a whole number (10.4 recruits on an 84-province
+## map). Rounding it up every turn gave a Human snowball, rounding it down
+## gave an Elve sweep, so grant the extra slot only on part of the turn cycle.
+## On the 21-province reference map the ideal cap is already an integer, so
+## this changes nothing there.
+func _scaled_cap(base: int, limit: int) -> int:
+	var exact := float(base) * pow(
+		float(game.map_state.province_count()) / float(REFERENCE_PROVINCES),
+		CAP_EXPONENT
+	)
+	var cap := int(floor(exact))
+	var turn := int(turn_manager.turn_number) if turn_manager != null else 0
+	if exact - float(cap) > 0.0 and (turn % 5 == 1 or turn % 5 == 3):
+		cap += 1
+	return clampi(cap, base, limit)
 
 
 ## Most expensive unit the realm can still afford; buying the strongest unit

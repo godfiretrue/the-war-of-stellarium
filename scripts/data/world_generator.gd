@@ -60,6 +60,17 @@ var _rng := RandomNumberGenerator.new()
 var _anchors: Array[Dictionary] = []
 var _spine_phase: float = 0.0
 
+## World size for this build. build() sets these from the requested scale, so
+## every field, table and image below works on the real dimensions instead of
+## the 1x reference grid.
+var _grid_w: int = GRID_W
+var _grid_h: int = GRID_H
+var _world_w: float = GRID_W * CELL
+var _world_h: float = GRID_H * CELL
+var _scale: float = 1.0
+var _target_provinces: int = TARGET_PROVINCES
+var _river_min_drainage: int = RIVER_MIN_DRAINAGE
+
 var _elev := PackedFloat32Array()
 var _moist := PackedFloat32Array()
 var _temp := PackedFloat32Array()
@@ -81,14 +92,23 @@ var _mount := PackedFloat32Array()
 ## Precomputed neighbour indices (-1 when off-grid). Order of the 8-table:
 ## row above (left, mid, right), same row (left, right), row below (l, m, r);
 ## so indices 0, 2, 5 and 7 are the diagonals.
-## Static: the grid is fixed, so every new world reuses the same tables
-## instead of paying ~0.5 s to rebuild them.
+## Reused between builds of the same size instead of paying ~0.5 s per world.
 static var _nbr4 := PackedInt32Array()
 static var _nbr8 := PackedInt32Array()
+static var _nbr_dims := Vector2i.ZERO
 
 
-func build(world_seed: int) -> MapState:
+func build(world_seed: int, world_scale: float = 1.0) -> MapState:
 	var started := Time.get_ticks_msec()
+	_scale = clampf(world_scale, 1.0, 2.0)
+	_grid_w = roundi(GRID_W * _scale)
+	_grid_h = roundi(GRID_H * _scale)
+	_world_w = float(_grid_w * CELL)
+	_world_h = float(_grid_h * CELL)
+	# Province and city density follow the area, so provinces stay the same
+	# physical size while the continent grows.
+	_target_provinces = roundi(TARGET_PROVINCES * _scale * _scale)
+	_river_min_drainage = roundi(RIVER_MIN_DRAINAGE * _scale * _scale)
 	_ensure_neighbor_tables()
 	for attempt in MAX_ATTEMPTS:
 		var state := _try_build(world_seed + attempt * 7919)
@@ -105,23 +125,25 @@ func anchors() -> Array[Dictionary]:
 	return _anchors
 
 
-## Builds the shared neighbour tables once per process.
-static func _ensure_neighbor_tables() -> void:
-	if not _nbr4.is_empty():
+## Builds the shared neighbour tables once per grid size.
+func _ensure_neighbor_tables() -> void:
+	var dims := Vector2i(_grid_w, _grid_h)
+	if _nbr_dims == dims and not _nbr4.is_empty():
 		return
-	var total := GRID_W * GRID_H
+	_nbr_dims = dims
+	var total := _grid_w * _grid_h
 	_nbr4.resize(total * 4)
 	_nbr8.resize(total * 8)
-	for y in GRID_H:
-		var row := y * GRID_W
-		var row_up := row - GRID_W
-		var row_down := row + GRID_W
+	for y in _grid_h:
+		var row := y * _grid_w
+		var row_up := row - _grid_w
+		var row_down := row + _grid_w
 		var has_up := y > 0
-		var has_down := y < GRID_H - 1
-		for x in GRID_W:
+		var has_down := y < _grid_h - 1
+		for x in _grid_w:
 			var index := row + x
 			var left := x > 0
-			var right := x < GRID_W - 1
+			var right := x < _grid_w - 1
 
 			var base8 := index * 8
 			_nbr8[base8] = (row_up + x - 1) if has_up and left else -1
@@ -145,26 +167,32 @@ static func _ensure_neighbor_tables() -> void:
 ## The only hand-placed content: the places the story needs to exist.
 func _make_anchors() -> Array[Dictionary]:
 	var list: Array[Dictionary] = [
-		{"id": "aldermere", "name": "Aldermere", "pos": Vector2(180, 300),
+		{"id": "aldermere", "name": "Aldermere", "pos": _scaled_point(180, 300),
 			"terrain": Balance.Terrain.COAST, "fortress": true,
 			"owner": Balance.Faction.HUMANS, "capital": true, "type": "Capital Port"},
-		{"id": "stonewatch", "name": "Stonewatch", "pos": Vector2(335, 150),
+		{"id": "stonewatch", "name": "Stonewatch", "pos": _scaled_point(335, 150),
 			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.HUMANS, "capital": false, "type": "Fortress"},
-		{"id": "iron_pass", "name": "Iron Pass", "pos": Vector2(540, 255),
+		{"id": "iron_pass", "name": "Iron Pass", "pos": _scaled_point(540, 255),
 			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.NEUTRAL, "capital": false, "type": "Fortress Pass"},
-		{"id": "oakhaven", "name": "Oakhaven", "pos": Vector2(700, 365),
+		{"id": "oakhaven", "name": "Oakhaven", "pos": _scaled_point(700, 365),
 			"terrain": Balance.Terrain.FOREST, "fortress": false,
 			"owner": Balance.Faction.NEUTRAL, "capital": false, "type": "River Town"},
-		{"id": "dawnwatch_spire", "name": "Dawnwatch Spire", "pos": Vector2(830, 135),
+		{"id": "dawnwatch_spire", "name": "Dawnwatch Spire", "pos": _scaled_point(830, 135),
 			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.ELVES, "capital": false, "type": "Elven Spire"},
-		{"id": "ysolde", "name": "Ysolde", "pos": Vector2(960, 295),
+		{"id": "ysolde", "name": "Ysolde", "pos": _scaled_point(960, 295),
 			"terrain": Balance.Terrain.MOUNTAINS, "fortress": true,
 			"owner": Balance.Faction.ELVES, "capital": true, "type": "Capital Citadel"},
 	]
 	return list
+
+
+## Anchor coordinates are authored on the 1x reference world, so they scale
+## with the continent instead of bunching up around the old centre.
+func _scaled_point(x: float, y: float) -> Vector2:
+	return Vector2(x, y) * _scale
 
 
 # --- Pipeline --------------------------------------------------------------
@@ -200,7 +228,7 @@ func _generate_fields() -> void:
 	var grain := _noise(_seed + 3, 0.010, FastNoiseLite.FRACTAL_RIDGED, 3)
 	var wet := _noise(_seed + 5, 0.008, FastNoiseLite.FRACTAL_FBM, 3)
 
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	_elev.resize(total)
 	_moist.resize(total)
 	_temp.resize(total)
@@ -208,23 +236,27 @@ func _generate_fields() -> void:
 	_mount.fill(0.0)
 
 	# 1. Continental base: a warped elliptical landmass with gentle lowlands.
-	for y in GRID_H:
-		for x in GRID_W:
+	for y in _grid_h:
+		for x in _grid_w:
 			var px := (float(x) + 0.5) * CELL
 			var py := (float(y) + 0.5) * CELL
 			var wx := px + warp.get_noise_2d(px, py) * 75.0
 			var wy := py + warp.get_noise_2d(px + 517.0, py + 211.0) * 75.0
-			var nx := (wx - 576.0) / 575.0
-			var ny := (wy - 286.0) / 240.0
+			# The continent keeps its proportions: the ellipse centre and radii
+			# scale with the world, while the noise frequencies stay in pixels.
+			var centre := Vector2(_world_w * 0.5, _world_h * 0.44)
+			var nx := (wx - centre.x) / (575.0 * _scale)
+			var ny := (wy - centre.y) / (240.0 * _scale)
 			var dist := sqrt(nx * nx + ny * ny)
 			var mask := clampf(1.0 - pow(dist, 3.0), 0.0, 1.0)
 			# Fade to open sea under the top and bottom HUD bars; the coast is
 			# pushed behind the bars so no foam line shows in the play area.
-			mask *= smoothstep(20.0, 80.0, py) * smoothstep(560.0, 500.0, py)
+			mask *= smoothstep(20.0 * _scale, 80.0 * _scale, py) \
+					* smoothstep(560.0 * _scale, 500.0 * _scale, py)
 
 			var low := base.get_noise_2d(px, py) * 0.5 + 0.5
 			var e := 0.18 + mask * 0.40 + (low - 0.5) * 0.24
-			_elev[y * GRID_W + x] = e
+			_elev[y * _grid_w + x] = e
 
 	# 2. Mountain ranges as tapered chains of points. Ridged noise alone gives
 	#    a field of short filaments; a chain gives one long crest with foothills
@@ -238,11 +270,11 @@ func _generate_fields() -> void:
 	# 4. Moisture and temperature, in one west-to-east pass. Prevailing winds
 	#    come off the western ocean: humidity dries inland and drops sharply
 	#    after a mountain range, which produces the rain shadow.
-	for y in GRID_H:
+	for y in _grid_h:
 		var carried := 1.0
-		var latitude := (float(y) + 0.5) / float(GRID_H)
-		for x in GRID_W:
-			var index := y * GRID_W + x
+		var latitude := (float(y) + 0.5) / float(_grid_h)
+		for x in _grid_w:
+			var index := y * _grid_w + x
 			var px := (float(x) + 0.5) * CELL
 			var py := (float(y) + 0.5) * CELL
 
@@ -274,8 +306,8 @@ func _range_points(start: Vector2, angle: float, steps: int, step_len: float,
 				+ _rng.randf_range(-jitter, jitter) + float(i) * 0.012
 		point += Vector2(cos(heading), sin(heading)) * step_len
 		# Keep ranges on the map even with a long chain.
-		point.x = clampf(point.x, 30.0, 1122.0)
-		point.y = clampf(point.y, 40.0, 610.0)
+		point.x = clampf(point.x, 30.0, _world_w - 30.0)
+		point.y = clampf(point.y, 40.0, _world_h - 38.0)
 	points.append(point)
 	return points
 
@@ -296,9 +328,9 @@ func _add_range(points: Array, width: float, height: float) -> void:
 			continue
 		var reach := width * (0.80 + 0.30 * sin(float(i) * 1.7 + _spine_phase * 2.0))
 		var min_x := maxi(int((minf(a.x, b.x) - reach) / CELL), 0)
-		var max_x := mini(int((maxf(a.x, b.x) + reach) / CELL), GRID_W - 1)
+		var max_x := mini(int((maxf(a.x, b.x) + reach) / CELL), _grid_w - 1)
 		var min_y := maxi(int((minf(a.y, b.y) - reach) / CELL), 0)
-		var max_y := mini(int((maxf(a.y, b.y) + reach) / CELL), GRID_H - 1)
+		var max_y := mini(int((maxf(a.y, b.y) + reach) / CELL), _grid_h - 1)
 		for y in range(min_y, max_y + 1):
 			for x in range(min_x, max_x + 1):
 				var point := Vector2((float(x) + 0.5) * CELL, (float(y) + 0.5) * CELL)
@@ -308,7 +340,7 @@ func _add_range(points: Array, width: float, height: float) -> void:
 					continue
 				var profile := pow(clampf(1.0 - distance / reach, 0.0, 1.0), 1.25)
 				var strength := smoothstep(0.0, 1.0, profile) * height * taper
-				var index := y * GRID_W + x
+				var index := y * _grid_w + x
 				if strength > _mount[index]:
 					_mount[index] = strength
 
@@ -316,11 +348,13 @@ func _add_range(points: Array, width: float, height: float) -> void:
 ## Layout of the ranges: one dominant spine, a secondary chain in the west and
 ## a small range through every mountain anchor.
 func _build_ranges() -> void:
-	var spine := _range_points(Vector2(620.0, 90.0), deg_to_rad(96.0), 22, 26.0, 0.85, 0.16)
-	_add_range(spine, 48.0, 0.46)
+	var spine_start := Vector2(620.0, 90.0) * _scale
+	var spine := _range_points(spine_start, deg_to_rad(96.0), 22, 26.0 * _scale, 0.85, 0.16)
+	_add_range(spine, 48.0 * _scale, 0.46)
 
-	var west := _range_points(Vector2(250.0, 350.0), deg_to_rad(-22.0), 15, 31.0, 0.55, 0.12)
-	_add_range(west, 36.0, 0.34)
+	var west_start := Vector2(250.0, 350.0) * _scale
+	var west := _range_points(west_start, deg_to_rad(-22.0), 15, 31.0 * _scale, 0.55, 0.12)
+	_add_range(west, 36.0 * _scale, 0.34)
 
 	for anchor in _anchors:
 		if int(anchor["terrain"]) != Balance.Terrain.MOUNTAINS:
@@ -331,8 +365,8 @@ func _build_ranges() -> void:
 		for i in range(-4, 5):
 			var t := float(i)
 			var angle := heading + sin(t * 0.5 + _spine_phase) * 0.55
-			points.append(center + Vector2(cos(angle), sin(angle)) * (t * 28.0))
-		_add_range(points, 42.0, 0.38)
+			points.append(center + Vector2(cos(angle), sin(angle)) * (t * 28.0 * _scale))
+		_add_range(points, 42.0 * _scale, 0.38)
 
 
 ## Lifts the base terrain where the ranges were stamped. Two noise scales: a
@@ -340,13 +374,13 @@ func _build_ranges() -> void:
 ## and a fine one so crests are jagged instead of smooth sausages.
 @warning_ignore("integer_division")
 func _apply_ranges(grain: FastNoiseLite) -> void:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	for index in total:
 		var strength := _mount[index]
 		if strength <= 0.0:
 			continue
-		var px := (float(index % GRID_W) + 0.5) * CELL
-		var py := (float(index / GRID_W) + 0.5) * CELL
+		var px := (float(index % _grid_w) + 0.5) * CELL
+		var py := (float(index / _grid_w) + 0.5) * CELL
 		var along := grain.get_noise_2d(px * 0.30 + 91.0, py * 0.30 + 47.0) * 0.5 + 0.5
 		var rough := 0.86 + 0.26 * clampf(grain.get_noise_2d(px, py) * 0.5 + 0.5, 0.0, 1.0)
 		var crags := clampf(grain.get_noise_2d(px * 4.5 + 33.0, py * 4.5 + 71.0) * 0.5 + 0.5, 0.0, 1.0)
@@ -365,28 +399,28 @@ func _carve_anchor_passes() -> void:
 			continue
 		var center: Vector2 = anchor["pos"]
 		var min_x := maxi(int((center.x - radius) / CELL), 0)
-		var max_x := mini(int((center.x + radius) / CELL), GRID_W - 1)
+		var max_x := mini(int((center.x + radius) / CELL), _grid_w - 1)
 		var min_y := maxi(int((center.y - radius) / CELL), 0)
-		var max_y := mini(int((center.y + radius) / CELL), GRID_H - 1)
+		var max_y := mini(int((center.y + radius) / CELL), _grid_h - 1)
 		for y in range(min_y, max_y + 1):
 			for x in range(min_x, max_x + 1):
 				var point := Vector2((float(x) + 0.5) * CELL, (float(y) + 0.5) * CELL)
 				var weight := smoothstep(radius, radius * 0.25, point.distance_to(center))
 				if weight <= 0.0:
 					continue
-				var index := y * GRID_W + x
+				var index := y * _grid_w + x
 				_elev[index] = minf(_elev[index], lerpf(_elev[index], 0.50, weight))
 
 
 func _cell_of(point: Vector2) -> int:
-	var x := clampi(int(point.x / CELL), 0, GRID_W - 1)
-	var y := clampi(int(point.y / CELL), 0, GRID_H - 1)
-	return y * GRID_W + x
+	var x := clampi(int(point.x / CELL), 0, _grid_w - 1)
+	var y := clampi(int(point.y / CELL), 0, _grid_h - 1)
+	return y * _grid_w + x
 
 
 ## Keeps the landmass that holds every anchor; everything else becomes sea.
 func _keep_main_land() -> bool:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	var component := PackedInt32Array()
 	component.resize(total)
 	component.fill(-1)
@@ -436,11 +470,11 @@ func _trace_rivers() -> void:
 	_priority_flood()
 	_compute_drainage()
 
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	_river.resize(total)
 	_river.fill(0)
 	for index in total:
-		if _elev[index] >= SEA_LEVEL and _drain[index] >= RIVER_MIN_DRAINAGE:
+		if _elev[index] >= SEA_LEVEL and _drain[index] >= _river_min_drainage:
 			_river[index] = 1
 
 	# Rivers make their banks greener.
@@ -461,7 +495,7 @@ func _trace_rivers() -> void:
 ## that is what stops rivers from coiling around lakes.
 @warning_ignore("integer_division")
 func _priority_flood() -> void:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	var levels := 1025
 
 	_filled.resize(total)
@@ -509,7 +543,7 @@ func _priority_flood() -> void:
 ## added by the flood makes every land cell point at a strictly lower neighbour,
 ## so the network is acyclic and can be summed high ground first.
 func _compute_drainage() -> void:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	_flow.resize(total)
 	_flow.fill(-1)
 	_drain.resize(total)
@@ -544,7 +578,7 @@ func _compute_drainage() -> void:
 ## drawn exactly once, so tributaries join a single stem instead of every
 ## source dragging its own path down the same valley.
 func _extract_rivers() -> void:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	_rivers.clear()
 	_river_widths.clear()
 
@@ -585,7 +619,7 @@ func _extract_rivers() -> void:
 
 		var outlet := path[path.size() - 1]
 		var volume := _drain[outlet]
-		var width := clampf(sqrt(float(volume) / 55.0), 0.9, 3.2)
+		var width := clampf(sqrt(float(volume) / (55.0 * _scale * _scale)), 0.9, 3.2)
 		_rivers.append(_chaikin_open(points, 3))
 		_river_widths.append(width)
 
@@ -605,13 +639,13 @@ func _smooth_path(points: PackedVector2Array, passes: int) -> PackedVector2Array
 
 
 func _cell_point(index: int) -> Vector2:
-	return Vector2(float(index % GRID_W) + 0.5, float(index / GRID_W) + 0.5) * float(CELL)
+	return Vector2(float(index % _grid_w) + 0.5, float(index / _grid_w) + 0.5) * float(CELL)
 
 
 # --- Provinces -------------------------------------------------------------
 
 func _grow_provinces() -> bool:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	_seed_cells = PackedInt32Array()
 
 	for anchor in _anchors:
@@ -621,7 +655,7 @@ func _grow_provinces() -> bool:
 		_seed_cells.append(cell)
 
 	var tries := 0
-	while _seed_cells.size() < TARGET_PROVINCES and tries < 8000:
+	while _seed_cells.size() < _target_provinces and tries < roundi(8000.0 * _scale * _scale):
 		tries += 1
 		var candidate := _rng.randi_range(0, total - 1)
 		if _elev[candidate] < SEA_LEVEL + 0.04:
@@ -635,7 +669,7 @@ func _grow_provinces() -> bool:
 		if free:
 			_seed_cells.append(candidate)
 
-	if _seed_cells.size() < 14:
+	if _seed_cells.size() < maxi(14, roundi(float(_target_provinces) * 0.67)):
 		return false
 
 	# Cost of entering a cell: mountains and rivers are expensive, so borders
@@ -703,7 +737,7 @@ func _grow_provinces() -> bool:
 
 func _assemble_state() -> MapState:
 	var count := _seed_cells.size()
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 
 	# Per-province statistics and adjacency.
 	# Plain Arrays: a nested PackedInt32Array fetched through `as` is a copy,
@@ -834,7 +868,8 @@ func _assemble_state() -> MapState:
 	state.provinces.clear()
 	for province in provinces:
 		state.provinces.append(province)
-	state.grid_size = Vector2i(GRID_W, GRID_H)
+	state.grid_size = Vector2i(_grid_w, _grid_h)
+	state.world_scale = _scale
 	state.cell_size = CELL
 	state.label_grid = _label.duplicate()
 	var ids := PackedStringArray()
@@ -849,7 +884,7 @@ func _assemble_state() -> MapState:
 
 ## Cell farthest from the province border: a good place for the label.
 func _visual_centers(count: int) -> PackedInt32Array:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	var depth := PackedInt32Array()
 	depth.resize(total)
 	depth.fill(-1)
@@ -951,13 +986,16 @@ func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_c
 		city_indices.append(index)
 
 	var added := 0
-	# First pass keeps towns apart; the relaxed pass fills up to four even when
+	# Town count follows the land area, so a bigger continent gets more towns
+	# without shrinking provinces: 4 at 1x, ~18 at 1.5x, 32 at 2x.
+	var town_target := 4 if _scale <= 1.01 else roundi(8.0 * _scale * _scale)
+	# First pass keeps towns apart; the relaxed pass fills the rest even when
 	# the graph is too tight for that.
 	for strict in [true, false]:
-		if added >= 4:
+		if added >= town_target:
 			break
 		for entry in scored:
-			if added >= 4:
+			if added >= town_target:
 				break
 			var index: int = entry["index"]
 			if city_indices.has(index):
@@ -992,7 +1030,9 @@ func _promote_city(province: ProvinceData, river_cells: int, coast_cells: int) -
 
 ## Gives each faction a connected block of provinces around its capital.
 func _distribute_ownership(provinces: Array[ProvinceData], adjacency: Array) -> void:
-	var target := clampi(int(round(float(provinces.size()) * 0.3)), 5, 8)
+	# Both sides start with about 30% of the world. The cap only exists to stop
+	# a tiny map handing out everything, so it grows with the province count.
+	var target := maxi(5, roundi(float(provinces.size()) * 0.3))
 	var counts := {Balance.Faction.HUMANS: 0, Balance.Faction.ELVES: 0}
 	for province in provinces:
 		if counts.has(province.owner_faction):
@@ -1042,14 +1082,14 @@ func _province_polygon(origin: Vector2, cells: Array) -> PackedVector2Array:
 	if cells.is_empty():
 		return PackedVector2Array()
 
-	var min_x := GRID_W
-	var min_y := GRID_H
+	var min_x := _grid_w
+	var min_y := _grid_h
 	var max_x := 0
 	var max_y := 0
 	for raw_cell in cells:
 		var cell := int(raw_cell)
-		var cx := cell % GRID_W
-		var cy := cell / GRID_W
+		var cx := cell % _grid_w
+		var cy := cell / _grid_w
 		min_x = mini(min_x, cx)
 		min_y = mini(min_y, cy)
 		max_x = maxi(max_x, cx)
@@ -1062,8 +1102,8 @@ func _province_polygon(origin: Vector2, cells: Array) -> PackedVector2Array:
 	mask.fill(0)
 	for raw_cell in cells:
 		var cell := int(raw_cell)
-		var cx := cell % GRID_W - min_x
-		var cy := cell / GRID_W - min_y
+		var cx := cell % _grid_w - min_x
+		var cy := cell / _grid_w - min_y
 		mask[cy * width + cx] = 1
 
 	mask = _open_mask(mask, width, height)
@@ -1199,7 +1239,7 @@ func _chaikin_open(points: PackedVector2Array, iterations: int) -> PackedVector2
 ## The alpha channel is filled by one multi-source BFS starting at every sea
 ## cell touching land, after _keep_main_land() has removed stray islands.
 func _build_field_image() -> Image:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	var distances := PackedInt32Array()
 	distances.resize(total)
 	distances.fill(-1)
@@ -1248,35 +1288,35 @@ func _build_field_image() -> Image:
 		else:
 			floats[base + 3] = minf(float(steps) * CELL / COAST_FADE_PX, 1.0) if steps > 0 else 1.0
 	floats = _blur_coast_alpha(floats)
-	return Image.create_from_data(GRID_W, GRID_H, false, Image.FORMAT_RGBAF, floats.to_byte_array())
+	return Image.create_from_data(_grid_w, _grid_h, false, Image.FORMAT_RGBAF, floats.to_byte_array())
 
 
 ## Softens the quantised coast-distance alpha with a sea-only Gaussian. Land
 ## texels are excluded from the weights, so the land mask stays exact and the
 ## first sea cell keeps its distance instead of being dragged towards zero.
 func _blur_coast_alpha(floats: PackedFloat32Array) -> PackedFloat32Array:
-	var total := GRID_W * GRID_H
+	var total := _grid_w * _grid_h
 	var alpha := PackedFloat32Array()
 	alpha.resize(total)
 	for index in total:
 		alpha[index] = floats[index * 4 + 3]
 	var smoothed := alpha.duplicate()
-	for y in GRID_H:
-		for x in GRID_W:
-			var index := y * GRID_W + x
+	for y in _grid_h:
+		for x in _grid_w:
+			var index := y * _grid_w + x
 			if _elev[index] >= SEA_LEVEL or alpha[index] >= 0.5:
 				continue
 			var sum := 0.0
 			var weight := 0.0
 			for oy in range(-2, 3):
 				var ny := y + oy
-				if ny < 0 or ny >= GRID_H:
+				if ny < 0 or ny >= _grid_h:
 					continue
 				for ox in range(-2, 3):
 					var nx := x + ox
-					if nx < 0 or nx >= GRID_W:
+					if nx < 0 or nx >= _grid_w:
 						continue
-					var neighbor := ny * GRID_W + nx
+					var neighbor := ny * _grid_w + nx
 					if _elev[neighbor] >= SEA_LEVEL:
 						continue
 					var w := float(COAST_BLUR_KERNEL[oy + 2][ox + 2])

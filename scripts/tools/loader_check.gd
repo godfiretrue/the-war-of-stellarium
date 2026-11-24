@@ -46,8 +46,16 @@ func _run() -> void:
 	if game == null or game.map_state == null:
 		_fail("game state is missing after loading")
 		return
-	if game.map_state.province_count() <= 0:
-		_fail("generated map has no provinces")
+	if not is_equal_approx(game.map_state.world_scale, MapFactory.DEFAULT_WORLD_SCALE):
+		_fail("expected world scale %.1f, got %.1f" % [MapFactory.DEFAULT_WORLD_SCALE, game.map_state.world_scale])
+		return
+	var expected := roundi(float(WorldGenerator.TARGET_PROVINCES)
+			* MapFactory.DEFAULT_WORLD_SCALE * MapFactory.DEFAULT_WORLD_SCALE)
+	if game.map_state.province_count() != expected:
+		_fail("expected %d provinces, got %d" % [expected, game.map_state.province_count()])
+		return
+	if game.map_state.grid_size != Vector2i(576, 324):
+		_fail("expected a 576x324 grid, got %s" % game.map_state.grid_size)
 		return
 	for faction: int in game.factions():
 		if game.map_state.provinces_owned_by(faction).is_empty():

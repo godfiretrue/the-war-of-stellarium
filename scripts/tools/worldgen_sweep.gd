@@ -5,12 +5,14 @@ extends SceneTree
 ##   godot --headless --path . --script res://scripts/tools/worldgen_sweep.gd
 ##
 ## The generator is procedural, so a single hand-picked map proves nothing:
-## this builds a few dozen worlds and checks the invariants the rest of the
-## game relies on (21 provinces, the six anchors, connected graph, polygons,
-## cities, rivers). Exits with code 1 on the first broken invariant.
+## this builds a few dozen worlds per world size and checks the invariants the
+## rest of the game relies on (province target, the six anchors, connected
+## graph, polygons, cities, rivers). Exits with code 1 on the first broken
+## invariant.
 
 const SEEDS := 24
 const BASE_SEED := 90210
+const SCALES := [1.0, 1.5, 2.0]
 
 
 func _initialize() -> void:
@@ -25,21 +27,25 @@ func _initialize() -> void:
 		terrain_counts[terrain] = 0
 
 	var generator := WorldGenerator.new()
-	for index in SEEDS:
-		var seed_value := BASE_SEED + index * 7919
+	for index in SEEDS * SCALES.size():
+		var scale: float = SCALES[index % SCALES.size()]
+		var seed_value := BASE_SEED + (index / SCALES.size()) * 7919
 		var started := Time.get_ticks_msec()
-		var state := generator.build(seed_value)
+		var state := generator.build(seed_value, scale)
 		var elapsed := Time.get_ticks_msec() - started
 		slowest = maxi(slowest, elapsed)
 
 		if state == null:
-			failures.append("seed %d: generator returned null" % seed_value)
+			failures.append("seed %d at %.1fx: generator returned null" % [seed_value, scale])
 			continue
 
-		var context := "seed %d" % seed_value
+		var context := "seed %d at %.1fx" % [seed_value, scale]
 
-		if state.province_count() != WorldGenerator.TARGET_PROVINCES:
-			failures.append("%s: %d provinces" % [context, state.province_count()])
+		var expected_provinces := roundi(float(WorldGenerator.TARGET_PROVINCES) * scale * scale)
+		if state.province_count() != expected_provinces:
+			failures.append("%s: %d provinces, expected %d" % [
+				context, state.province_count(), expected_provinces,
+			])
 
 		for anchor in generator.anchors():
 			if not state.has_province(String(anchor["id"])):
@@ -73,8 +79,11 @@ func _initialize() -> void:
 				failures.append("%s: %s has no neighbours" % [context, province.id])
 		cities_min = mini(cities_min, cities)
 		cities_max = maxi(cities_max, cities)
-		if cities != 10:
-			failures.append("%s: %d cities, expected 10" % [context, cities])
+		var town_target := 4 if scale <= 1.01 else roundi(8.0 * scale * scale)
+		if cities != 6 + town_target:
+			failures.append("%s: %d cities, expected %d" % [
+				context, cities, 6 + town_target,
+			])
 
 		if not _is_connected(state):
 			failures.append("%s: province graph is not connected" % context)
@@ -82,7 +91,7 @@ func _initialize() -> void:
 		var river_count := state.rivers.size()
 		rivers_min = mini(rivers_min, river_count)
 		rivers_max = maxi(rivers_max, river_count)
-		if river_count < 6:
+		if river_count < roundi(6.0 * scale * scale):
 			failures.append("%s: only %d rivers" % [context, river_count])
 
 		for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
@@ -91,8 +100,8 @@ func _initialize() -> void:
 					context, Balance.faction_name(faction),
 				])
 
-	print("[sweep] %d worlds, rivers %d-%d, cities %d-%d, slowest %d ms" % [
-		SEEDS, rivers_min, rivers_max, cities_min, cities_max, slowest,
+	print("[sweep] %d worlds x %d sizes, rivers %d-%d, cities %d-%d, slowest %d ms" % [
+		SEEDS, SCALES.size(), rivers_min, rivers_max, cities_min, cities_max, slowest,
 	])
 	var terrain_parts: PackedStringArray = PackedStringArray()
 	for terrain: int in Balance.TERRAIN_NAMES.keys():

@@ -60,6 +60,20 @@ func _run() -> void:
 	if game.map_state == null or game.map_state.province_count() <= 0:
 		_fail("map was not restored")
 		return
+	var expected_provinces := roundi(
+		float(WorldGenerator.TARGET_PROVINCES) * MapFactory.DEFAULT_WORLD_SCALE
+		* MapFactory.DEFAULT_WORLD_SCALE
+	)
+	if not is_equal_approx(game.map_state.world_scale, MapFactory.DEFAULT_WORLD_SCALE):
+		_fail("expected world scale %.1f, got %.1f" % [
+			MapFactory.DEFAULT_WORLD_SCALE, game.map_state.world_scale,
+		])
+		return
+	if game.map_state.province_count() != expected_provinces:
+		_fail("expected %d provinces, got %d" % [
+			expected_provinces, game.map_state.province_count(),
+		])
+		return
 	if turn_manager.turn_number != TEST_TURN:
 		_fail("expected turn %d, got %d" % [TEST_TURN, turn_manager.turn_number])
 		return

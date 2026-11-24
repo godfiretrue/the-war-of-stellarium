@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 5
+const VERSION := 6
 
 
 static func has_save() -> bool:
@@ -31,6 +31,7 @@ static func save_game(game: GameState, turn_number: int) -> bool:
 	var data := {
 		"version": VERSION,
 		"map_seed": game.map_state.map_seed,
+		"world_scale": game.map_state.world_scale,
 		"turn_number": turn_number,
 		"factions": _serialize_factions(game),
 		"provinces": _serialize_provinces(game.map_state),
@@ -67,7 +68,8 @@ static func load_game(game: GameState) -> Dictionary:
 		return {"ok": false, "reason": "game state missing"}
 
 	var data: Dictionary = result["data"]
-	game.start_new_game(int(data.get("map_seed", 0)))
+	game.start_new_game(int(data.get("map_seed", 0)),
+			float(data.get("world_scale", MapFactory.DEFAULT_WORLD_SCALE)))
 	apply_save(game, data)
 	return {"ok": true, "turn": int(data.get("turn_number", 1))}
 
@@ -110,9 +112,15 @@ static func apply_save(game: GameState, data: Dictionary) -> void:
 ## file is from the future or unknown and must not be loaded.
 static func _migrate(raw: Dictionary) -> Dictionary:
 	var version := int(raw.get("version", 0))
+	# Version 5 predates selectable world sizes, so those saves are all 1x
+	# worlds. The province ids stay valid because worldgen is unchanged at 1x.
+	if version == 5:
+		raw["world_scale"] = 1.0
+		raw["version"] = VERSION
+		return raw
 	# Saves store the world seed and regenerate the map from it, so any change
 	# to world generation renames/moves provinces and invalidates the province
-	# ids in the file. Refuse old versions instead of loading a broken game.
+	# ids in the file. Refuse unknown versions instead of loading a broken game.
 	if version != VERSION:
 		return {}
 	return raw

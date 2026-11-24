@@ -39,8 +39,8 @@ func is_started() -> bool:
 
 ## Pass a seed to rebuild a specific world (used when loading a save);
 ## a negative seed rolls a new random continent.
-func start_new_game(map_seed: int = -1) -> void:
-	start_new_game_from_map(MapFactory.create_default_map(map_seed))
+func start_new_game(map_seed: int = -1, world_scale: float = MapFactory.DEFAULT_WORLD_SCALE) -> void:
+	start_new_game_from_map(MapFactory.create_default_map(map_seed, world_scale))
 
 
 ## Starts a game from an already generated and finalized map. The loading

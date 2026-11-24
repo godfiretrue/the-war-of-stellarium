@@ -11,6 +11,8 @@ extends SceneTree
 const GAMES := 20
 const BASE_SEED := 41000
 const MAX_TURNS := 400
+## Balance is measured on the shipping world size.
+const WORLD_SCALE := 2.0
 
 var game: GameState
 var turn_manager: Node
@@ -53,8 +55,8 @@ func _run_all() -> void:
 	game.quiet = true
 	turn_manager.autosave = false
 
-	print("[sim] %d games, seeds %d..%d, max %d turns" % [
-		GAMES, BASE_SEED, BASE_SEED + GAMES - 1, MAX_TURNS,
+	print("[sim] %d games at %.1fx, seeds %d..%d, max %d turns" % [
+		GAMES, WORLD_SCALE, BASE_SEED, BASE_SEED + GAMES - 1, MAX_TURNS,
 	])
 
 	for index in GAMES:
@@ -81,7 +83,7 @@ func _make_bot(faction: int) -> BotController:
 func _run_game(seed_value: int) -> void:
 	humans.stalemate_rounds = 0
 	elves.stalemate_rounds = 0
-	turn_manager.start_game(seed_value)
+	turn_manager.start_game(seed_value, WORLD_SCALE)
 
 	if not turn_manager.is_player_planning():
 		_errors.append("seed %d: game did not start in player planning" % seed_value)

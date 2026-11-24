@@ -85,7 +85,7 @@ func _on_settings_closed() -> void:
 func _on_new_game() -> void:
 	if _loading:
 		return
-	_begin_loading(-1, false, {})
+	_begin_loading(-1, false, {}, MapFactory.DEFAULT_WORLD_SCALE)
 
 
 func _on_continue() -> void:
@@ -98,13 +98,17 @@ func _on_continue() -> void:
 		return
 
 	var data: Dictionary = result.get("data", {})
-	_begin_loading(int(data.get("map_seed", 0)), true, data)
+	# A save remembers the world size it was created on, so loading always
+	# rebuilds the same continent instead of the current default.
+	var world_scale := float(data.get("world_scale", MapFactory.DEFAULT_WORLD_SCALE))
+	_begin_loading(int(data.get("map_seed", 0)), true, data, world_scale)
 
 
 ## Generates the world on a worker thread so the menu and the loading overlay
 ## keep animating. Finalization, save application and the scene change happen
 ## on the main thread in _process().
-func _begin_loading(map_seed: int, is_continue: bool, save_data: Dictionary) -> void:
+func _begin_loading(map_seed: int, is_continue: bool, save_data: Dictionary,
+		world_scale: float = MapFactory.DEFAULT_WORLD_SCALE) -> void:
 	_loading = true
 	_loading_continue = is_continue
 	_loading_save = save_data
@@ -118,13 +122,13 @@ func _begin_loading(map_seed: int, is_continue: bool, save_data: Dictionary) -> 
 	set_process(true)
 
 	_loading_thread = Thread.new()
-	var error := _loading_thread.start(_generate_world_thread.bind(map_seed))
+	var error := _loading_thread.start(_generate_world_thread.bind(map_seed, world_scale))
 	if error != OK:
 		_fail_loading(Loc.t("world_failed"))
 
 
-func _generate_world_thread(map_seed: int) -> void:
-	var state := MapFactory.generate_map_data(map_seed)
+func _generate_world_thread(map_seed: int, world_scale: float) -> void:
+	var state := MapFactory.generate_map_data(map_seed, world_scale)
 	_loading_mutex.lock()
 	_loading_state = state
 	_loading_done = true

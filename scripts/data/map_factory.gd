@@ -7,9 +7,13 @@ extends RefCounted
 ## of generated provinces depend on the seed, so saves store the seed and
 ## rebuild the same map before applying ownership and garrisons.
 
+## The campaign is authored on the 2x continent; 1.0 is kept for the
+## reference-size balance runs and for old saves.
+const DEFAULT_WORLD_SCALE := 2.0
+
 ## Pass a negative seed for a fresh random world.
-static func create_default_map(map_seed: int = -1) -> MapState:
-	var state := generate_map_data(map_seed)
+static func create_default_map(map_seed: int = -1, world_scale: float = DEFAULT_WORLD_SCALE) -> MapState:
+	var state := generate_map_data(map_seed, world_scale)
 	if state == null:
 		return MapState.new()
 	return finalize_map(state)
@@ -18,7 +22,7 @@ static func create_default_map(map_seed: int = -1) -> MapState:
 ## Pure world generation, safe to run on a worker thread: it only builds data
 ## resources and never touches the scene tree. Call finalize_map() afterwards on
 ## the main thread.
-static func generate_map_data(map_seed: int = -1) -> MapState:
+static func generate_map_data(map_seed: int = -1, world_scale: float = DEFAULT_WORLD_SCALE) -> MapState:
 	var world_seed := map_seed
 	if world_seed < 0:
 		var rng := RandomNumberGenerator.new()
@@ -26,7 +30,7 @@ static func generate_map_data(map_seed: int = -1) -> MapState:
 		world_seed = rng.randi() & 0x7fffffff
 
 	var generator := WorldGenerator.new()
-	var state := generator.build(world_seed)
+	var state := generator.build(world_seed, world_scale)
 	if state == null:
 		push_error("MapFactory: world generation failed for seed %d" % world_seed)
 		return null
