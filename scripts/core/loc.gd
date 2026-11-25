@@ -32,6 +32,13 @@ const STRINGS := {
 		"terrain_mountains": "Montanhas",
 		"terrain_forest": "Floresta",
 		"terrain_coast": "Costa",
+		"terrain_highlands": "Terras Altas",
+		"territory_highland_stronghold": "Fortaleza das Terras Altas",
+		"peak_impassable": "Pico intransponível",
+		"ambush": "Emboscada",
+		"ambush_active": "Em emboscada",
+		"fog_hidden": "Sem informação sobre a guarnição inimiga",
+		"fog_unexplored": "Território por explorar",
 		"territory_capital_port": "Porto Capital",
 		"territory_fortress": "Fortaleza",
 		"territory_fortress_pass": "Passo Fortificado",
@@ -96,6 +103,13 @@ const STRINGS := {
 		"tip_manpower": "Mão-de-obra: %d\nRendimento: +%d",
 		"tip_resource": "%s: %d\nRendimento: +%d",
 		"tip_terrain": "Rendimento base: +%d ouro, +%d mão-de-obra\nDefesa: ×%.2f",
+		"tip_ambush": "Esconder a guarnição até o inimigo entrar (A)",
+		"ambush_reason_ground": "Só em cidades, fortalezas ou terreno defensivo",
+		"ambush_reason_troops": "Não há tropas para emboscar",
+		"ambush_reason_busy": "Esta província já tem uma ordem",
+		"ambush_reason_active": "A guarnição já está em emboscada",
+		"order_ambush": "Emboscar tropas em %s",
+		"order_short_ambush": "Emboscada",
 		"fortress_upkeep": "Fortaleza: -%d ouro/turno",
 		"tip_orders_toggle": "Mostrar ou esconder a fila de ordens",
 		"tip_orders_collapse": "Recolher a fila de ordens",
@@ -129,6 +143,7 @@ const STRINGS := {
 		# --- Battle report ----------------------------------------------
 		"battle_siege": "Cerco ao castelo de %s",
 		"battle_field": "Batalha em campo aberto em %s",
+		"battle_ambush": "Emboscada em %s!",
 		"battle_line": "%s atacou %s — poder %.0f vs %.0f",
 		"battle_losses": "Baixas: %d atacante · %d defensor",
 		"battle_captured": "território capturado",
@@ -186,6 +201,13 @@ const STRINGS := {
 		"terrain_mountains": "Mountains",
 		"terrain_forest": "Forest",
 		"terrain_coast": "Coast",
+		"terrain_highlands": "Highlands",
+		"territory_highland_stronghold": "Highland Stronghold",
+		"peak_impassable": "Impassable peak",
+		"ambush": "Ambush",
+		"ambush_active": "Ambushing",
+		"fog_hidden": "No intelligence on the enemy garrison",
+		"fog_unexplored": "Unexplored territory",
 		"territory_capital_port": "Capital Port",
 		"territory_fortress": "Fortress",
 		"territory_fortress_pass": "Fortress Pass",
@@ -250,6 +272,13 @@ const STRINGS := {
 		"tip_manpower": "Manpower: %d\nIncome: +%d",
 		"tip_resource": "%s: %d\nIncome: +%d",
 		"tip_terrain": "Base income: +%d gold, +%d manpower\nDefence: ×%.2f",
+		"tip_ambush": "Hide the garrison until the enemy enters (A)",
+		"ambush_reason_ground": "Cities, fortresses or defensive ground only",
+		"ambush_reason_troops": "No troops to hide",
+		"ambush_reason_busy": "This province already has an order",
+		"ambush_reason_active": "The garrison is already ambushing",
+		"order_ambush": "Ambush troops in %s",
+		"order_short_ambush": "Ambush",
 		"fortress_upkeep": "Fortress: -%d gold/turn",
 		"tip_orders_toggle": "Show or hide the order queue",
 		"tip_orders_collapse": "Collapse the order queue",
@@ -283,6 +312,7 @@ const STRINGS := {
 		# --- Battle report ----------------------------------------------
 		"battle_siege": "Castle siege of %s",
 		"battle_field": "Open field battle at %s",
+		"battle_ambush": "Ambush at %s!",
 		"battle_line": "%s attacked %s — power %.0f vs %.0f",
 		"battle_losses": "Losses: %d attacker · %d defender",
 		"battle_captured": "territory captured",
@@ -353,6 +383,8 @@ static func terrain_name(terrain: int) -> String:
 			return t("terrain_forest")
 		Balance.Terrain.COAST:
 			return t("terrain_coast")
+		Balance.Terrain.HIGHLANDS:
+			return t("terrain_highlands")
 	return t("terrain_plains")
 
 
@@ -422,6 +454,10 @@ static func reason(raw: String) -> String:
 	text = text.replace("unknown province", "província desconhecida")
 	text = text.replace("unknown unit", "unidade desconhecida")
 	text = text.replace("no troops selected", "nenhuma tropa selecionada")
+	text = text.replace(" cannot hide an army here", " não pode esconder um exército aqui")
+	text = text.replace(" is lying in ambush and cannot march", " está em emboscada e não pode marchar")
+	text = text.replace(" is lying in ambush and cannot recruit", " está em emboscada e não pode recrutar")
+	text = text.replace(" already has an order this turn", " já tem uma ordem neste turno")
 	text = text.replace("need ", "faltam ")
 	text = text.replace(" gold and ", " de ouro e ")
 	text = text.replace(" manpower", " de mão-de-obra")

@@ -14,16 +14,19 @@ O combate é numérico: o jogador escolhe que tropas destacar e o resultado depe
 6. Recrutamento só em cidades e castelos (`ProvinceData.is_city`). Humanos pagam 0,7× o custo; Elfos recebem 1,15× de ouro e manpower.
 7. Manutenção por exército: `ceil(custo_médio_da_unidade / 15 × tropas ^ 1,2)`.
 8. As baixas são distribuídas uma tropa de cada vez, por ordem estável de unidade, para não apagar um tipo inteiro de uma vez.
+9. Uma guarnição em **emboscada** (ordem `queue_ambush`) multiplica o seu poder defensivo por 1,5 e as baixas do atacante por 1,25. A emboscada gasta-se no primeiro combate, mesmo que a província resista, e aparece no relatório. Só se pode emboscar em cidades, fortalezas ou terreno defensivo (terras altas, montanhas, floresta). A guarnição não pode receber outra ordem no mesmo turno; se marchar no turno seguinte, a emboscada termina.
 
 ## Numbers
 
 | Nome | Valor | Unidade | Observação |
 |---|---|---|---|
-| Multiplicador de defesa: planície / floresta / costa / montanha | 1,0 / 1,15 / 1,0 / 1,35 | × | `Balance.TERRAIN_DEFENSE` |
+| Multiplicador de defesa: planície / floresta / costa / montanha / terras altas | 1,0 / 1,15 / 1,0 / 1,35 / 1,5 | × | `Balance.TERRAIN_DEFENSE` |
 | Bónus de fortaleza | +0,25 | × | soma ao multiplicador de terreno |
 | Poder da milícia | 4 | por tropa | antes do terreno |
 | Fator aleatório | 0,9–1,1 | × | `COMBAT_RANDOM_MIN/MAX` |
 | Fator de baixas atacante / defensor | 0,7 / 1,0 | × | `ATTACKER_LOSS_FACTOR` / `DEFENDER_LOSS_FACTOR` |
+| Bónus defensivo da emboscada | 1,5 | × | `AMBUSH_DEFENSE_MULTIPLIER` |
+| Bónus de baixas ao atacante emboscado | 1,25 | × | `AMBUSH_ATTACKER_LOSS_MULTIPLIER` |
 | Espadachins humanos | 5 atk / 5 def | 24 ouro, 5 manpower, 2 manutenção | `human_swordsmen` |
 | Besteiros humanos | 7 atk / 3 def | 30 ouro, 6 manpower, 3 manutenção | `human_crossbowmen` |
 | Javali mecânico élfico | 6 atk / 7 def | 30 ouro, 6 manpower, 3 manutenção | `elf_boar` |

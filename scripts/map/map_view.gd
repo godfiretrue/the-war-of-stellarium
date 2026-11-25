@@ -346,10 +346,24 @@ func focus_province(province_id: String) -> void:
 
 
 func refresh_all() -> void:
+	_apply_fog()
 	for view_id: String in _views.keys():
 		var view: ProvinceView = _views[view_id]
 		view.refresh()
 	_redraw_overlay()
+
+
+## Fog comes from GameState so the map never computes rules of its own. A
+## queued ambush counts immediately, through is_province_visible().
+func _apply_fog() -> void:
+	if game == null or state == null:
+		return
+	for province_id: String in _views.keys():
+		var view: ProvinceView = _views[province_id]
+		view.set_intel(
+			game.is_province_explored(PLAYER, province_id),
+			game.is_province_visible(PLAYER, province_id)
+		)
 
 
 ## The terrain is one world-sized rectangle painted by a shader that reads the
@@ -455,6 +469,11 @@ func _build_views() -> void:
 		add_child(view)
 		view.setup(province)
 		view.set_view_zoom(_current_zoom())
+		if game != null:
+			view.set_intel(
+				game.is_province_explored(PLAYER, province.id),
+				game.is_province_visible(PLAYER, province.id)
+			)
 		# Keep an armed march visible across a state rebuild.
 		var valid := _march_targets.has(province.id)
 		view.set_march_mode(not _march_targets.is_empty(), valid)
@@ -490,6 +509,7 @@ func _on_phase_changed(_phase: int) -> void:
 
 
 func _on_orders_changed() -> void:
+	_apply_fog()
 	_redraw_overlay()
 
 
@@ -558,7 +578,9 @@ func _draw_queued_orders() -> void:
 		return
 
 	var recruit_slots: Dictionary = {}
-	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
+	# With fog of war the opponent's queued orders must stay secret; only this
+	# faction's own moves and ambushes are drawn on the map.
+	for faction: int in [PLAYER]:
 		var base_color := UiStyle.faction_color(faction)
 		var orders := game.queued_orders_for(faction)
 		for index in orders.size():
@@ -581,6 +603,22 @@ func _draw_queued_orders() -> void:
 				var rect := _draw_badge(badge, count, color, highlighted, BADGE_RADIUS)
 				if faction == PLAYER and not rect.size.is_zero_approx():
 					_order_hits.append({"rect": rect.grow(4.0), "index": index})
+			elif String(order.get("type", "")) == "ambush":
+				var province := state.get_province(String(order.get("province_id", "")))
+				if province == null:
+					continue
+				var point := province.map_position + Vector2(16, -18)
+				_overlay.draw_circle(point, BADGE_RADIUS + 2.0, Color(0.02, 0.03, 0.05, 0.90))
+				_overlay.draw_arc(point, BADGE_RADIUS, 0.0, TAU, 24, color, 2.0, true)
+				_overlay.draw_line(
+					point + Vector2(-4, 4), point + Vector2(4, -4), color, 2.0, true
+				)
+				if faction == PLAYER and highlighted:
+					_order_hits.append({
+						"rect": Rect2(point - Vector2(BADGE_RADIUS, BADGE_RADIUS),
+							Vector2(BADGE_RADIUS * 2.0, BADGE_RADIUS * 2.0)).grow(4.0),
+						"index": index,
+					})
 			elif String(order.get("type", "")) == "recruit":
 				var province := state.get_province(String(order.get("province_id", "")))
 				if province == null:

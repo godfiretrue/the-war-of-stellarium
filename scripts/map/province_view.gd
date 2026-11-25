@@ -43,6 +43,9 @@ var _order_highlight := false
 var _connected_draw := false
 ## Current map zoom, used for label level of detail.
 var _view_zoom := 1.0
+## Fog of war: remembered terrain and live troop intelligence are separate.
+var _explored := true
+var _intel := true
 
 
 func setup(province: ProvinceData) -> void:
@@ -169,8 +172,18 @@ func set_view_zoom(value: float) -> void:
 	_update_label_visibility()
 
 
+## Called by MapView after every board change. Explored terrain stays drawn;
+## hidden garrisons (including ambushes) lose their army shield and number.
+func set_intel(explored: bool, intel: bool) -> void:
+	if _explored == explored and _intel == intel:
+		return
+	_explored = explored
+	_intel = intel
+	refresh()
+
+
 func _update_label_visibility() -> void:
-	if data == null:
+	if data == null or not _explored:
 		_name_label.visible = false
 		return
 	_name_label.visible = data.is_city or _view_zoom >= LABEL_ZOOM \
@@ -223,6 +236,11 @@ func _faction_line_color() -> Color:
 ## Faint ownership wash over the terrain; the border line carries the strong
 ## colour. Neutral land stays untinted so its natural colours show.
 func _province_color() -> Color:
+	# Fog first: unknown land is dark, explored-but-unseen land is merely dimmed.
+	if not _explored:
+		return Color(0.010, 0.015, 0.030, 0.92)
+	if not _intel:
+		return Color(0.015, 0.020, 0.035, 0.55)
 	# While a march target is being chosen, everything out of reach recedes.
 	if _march_mode and not _march_target and not _selected:
 		return Color(0.010, 0.015, 0.030, 0.34)
@@ -245,7 +263,14 @@ func _province_color() -> Color:
 # --- Visual Drawing (Icons & Shields) -----------------------------------
 
 func _on_visuals_draw() -> void:
-	if data == null:
+	if data == null or not _explored:
+		return
+
+	if data.is_impassable:
+		_draw_peak_marker()
+	if data.ambush and data.owner_faction == Balance.PLAYER_FACTION:
+		_draw_ambush_badge()
+	if not _intel:
 		return
 
 	if _selected:
@@ -258,6 +283,8 @@ func _on_visuals_draw() -> void:
 			_draw_fortress_icon()
 		else:
 			_draw_town_icon()
+	elif data.terrain == Balance.Terrain.HIGHLANDS:
+		_draw_highland_icon()
 	else:
 		_draw_waypoint_icon()
 
@@ -325,6 +352,21 @@ func _draw_waypoint_icon() -> void:
 	_visuals.draw_polyline(diamond, Color(0.93, 0.95, 0.98, 0.9), 1.4, true)
 
 
+## Defensive high ground: a small crenellated ridge, distinct from a waypoint.
+func _draw_highland_icon() -> void:
+	var center := Vector2(0, -15)
+	var stone := Color(0.92, 0.94, 0.98, 0.92)
+	_visuals.draw_line(
+		center + Vector2(-9, 5), center + Vector2(0, -6), stone, 2.0, true
+	)
+	_visuals.draw_line(
+		center + Vector2(0, -6), center + Vector2(9, 5), stone, 2.0, true
+	)
+	_visuals.draw_line(
+		center + Vector2(-10, 6), center + Vector2(10, 6), stone, 2.0, true
+	)
+
+
 ## Consistent faction-coloured shield with the troop count drawn inside it.
 func _draw_army_shield() -> void:
 	var center := Vector2(0, 6)
@@ -360,6 +402,33 @@ func _draw_army_shield() -> void:
 		-1,
 		font_size,
 		Color.WHITE
+	)
+
+
+## A crossed ridge marks ground that can never be marched through.
+func _draw_peak_marker() -> void:
+	var center := Vector2(0, -17)
+	var color := Color(0.94, 0.96, 1.0, 0.85)
+	_visuals.draw_line(
+		center + Vector2(-9, 7), center + Vector2(0, -8), color, 2.0, true
+	)
+	_visuals.draw_line(
+		center + Vector2(0, -8), center + Vector2(9, 7), color, 2.0, true
+	)
+	_visuals.draw_line(
+		center + Vector2(-7, 7), center + Vector2(7, 7), Color(0.05, 0.06, 0.09, 0.9), 3.0, true
+	)
+
+
+## Slashed eye over your own hidden garrison. The enemy never draws this.
+func _draw_ambush_badge() -> void:
+	var center := Vector2(16, -18)
+	var color := Color(1.0, 0.62, 0.32, 0.95)
+	_draw_plate(Rect2(center + Vector2(-9, -7), Vector2(18, 14)))
+	_visuals.draw_circle(center, 4.2, color)
+	_visuals.draw_circle(center, 1.8, Color(0.05, 0.06, 0.09, 0.95))
+	_visuals.draw_line(
+		center + Vector2(-5, 5), center + Vector2(5, -5), color, 1.6, true
 	)
 
 

@@ -30,6 +30,16 @@ const CAP_EXPONENT := 0.9
 const ATTACK_SAFETY_MARGIN := 1.0
 const IMPATIENCE_ROUNDS := 3
 
+## Leaf task for the ambush phase. Duck-typed like the other tasks so this
+## inner class does not create a circular class dependency.
+class BTAmbushTask extends BTAction:
+	func _tick(_delta: float) -> int:
+		var bot := get_agent()
+		if bot == null or not bot.has_method("ambush_phase"):
+			return BT.FAILURE
+		bot.ambush_phase()
+		return BT.SUCCESS
+
 var game: GameState
 var turn_manager: Node
 
@@ -102,6 +112,7 @@ func build_behavior_tree() -> BehaviorTree:
 	var root := BTSequence.new()
 	root.set_custom_name("Elf turn")
 	root.add_child(BTRecruitTask.new())
+	root.add_child(BTAmbushTask.new())
 
 	# Attack and advance both run every turn. Making them alternatives let one
 	# available battle suppress all expansion, which produced fronts that never
@@ -151,6 +162,26 @@ func recruit_phase() -> void:
 			if result.get("ok", false):
 				queued += 1
 				placed = true
+
+
+## Hides a small number of border armies when the front has stopped moving.
+## Using ambush only under stalemate keeps a hidden army from freezing an
+## otherwise advancing war, and every order still goes through GameState.
+func ambush_phase() -> void:
+	if game == null or game.map_state == null or stalemate_rounds < 1:
+		return
+	var cap := 1 if stalemate_rounds < IMPATIENCE_ROUNDS else 2
+	var placed := 0
+	for province in game.map_state.provinces_owned_by(bot_faction):
+		if placed >= cap:
+			break
+		if not province.can_ambush() or not _borders_enemy(province):
+			continue
+		if game.has_move_order(bot_faction, province.id):
+			continue
+		var result := game.queue_ambush(bot_faction, province.id)
+		if result.get("ok", false):
+			placed += 1
 
 
 ## Reference-size behaviour: all slots in one city. The capital recruits while
@@ -337,9 +368,11 @@ func best_attack_target(
 	for target in game.map_state.neighbors_of(province.id):
 		if target.is_owned_by(bot_faction):
 			continue
-		if target.defence_troops() <= 0:
+		# Fog of war: judge the odds on what the bot can actually see. An
+		# ambushing garrison reads as empty, so walking into one is a real risk.
+		if game.visible_troops(bot_faction, target) <= 0:
 			continue
-		var defense := maxf(target.defense_power(), 1.0)
+		var defense := maxf(game.visible_defense_power(bot_faction, target), 1.0)
 		var ratio := attack / defense
 		if not ignore_odds and ratio < ATTACK_SAFETY_MARGIN:
 			continue
@@ -421,7 +454,7 @@ func _best_open_neighbor(province: ProvinceData) -> ProvinceData:
 	for target in game.map_state.neighbors_of(province.id):
 		if target.is_owned_by(bot_faction):
 			continue
-		if target.defence_troops() > 0:
+		if game.visible_troops(bot_faction, target) > 0:
 			continue
 		if not target.is_neutral():
 			return target
@@ -430,9 +463,10 @@ func _best_open_neighbor(province: ProvinceData) -> ProvinceData:
 	return neutral
 
 
-## An army may enter friendly land or a province with no defence left.
+## An army may enter friendly land or a province it believes undefended.
 func _can_enter(province: ProvinceData) -> bool:
-	return province.is_owned_by(bot_faction) or province.defence_troops() <= 0
+	return province.is_owned_by(bot_faction) \
+		or game.visible_troops(bot_faction, province) <= 0
 
 
 func _has_queued_move(faction: int, from_id: String, to_id: String) -> bool:
@@ -504,7 +538,7 @@ func _nearest_open_step(from_id: String) -> ProvinceData:
 			if came_from.has(neighbor.id):
 				continue
 			came_from[neighbor.id] = current
-			if neighbor.is_neutral() and neighbor.defence_troops() <= 0:
+			if neighbor.is_neutral() and game.visible_troops(bot_faction, neighbor) <= 0:
 				return _first_step(came_from, from_id, neighbor.id)
 			if neighbor.is_owned_by(bot_faction):
 				frontier.append(neighbor.id)

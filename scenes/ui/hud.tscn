@@ -437,10 +437,23 @@ size_flags_horizontal = 3
 text = "Recrutar"
 clip_text = true
 
-[node name="March" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox"]
+[node name="ActionRow" type="HBoxContainer" parent="Root/BottomPanel/PanelRow/ActionsBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="March" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/ActionRow"]
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
+size_flags_horizontal = 3
 text = "➔ Marchar"
+clip_text = true
+
+[node name="Ambush" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/ActionRow"]
+custom_minimum_size = Vector2(0, 30)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Emboscada"
 clip_text = true
 
 [node name="EndTurn" type="Button" parent="Root"]

@@ -42,7 +42,8 @@ Explorar províncias neutras → ganhar ouro, manpower e recurso de facção →
 |---|---|---|---|---|
 | Resolução de turnos e ordens | implemented | MVP | Fases simultâneas, fila de ordens validada, resolução por snapshot | [design](features/turn-resolution/design.md) |
 | Combate e unidades | implemented | MVP | Fórmula numérica, terreno, milícia, quatro tipos de unidade | [design](features/combat-and-units/design.md) |
-| Mapa e províncias | implemented | MVP | 21 províncias, quatro terrenos, fortalezas, economia geográfica | [design](features/map-and-provinces/design.md) |
+| Mapa e províncias | implemented | MVP + Fase 1.5 | 21 províncias, cinco terrenos (com Terras Altas), fortalezas, picos intransponíveis | [design](features/map-and-provinces/design.md) |
+| Névoa de guerra e emboscadas | implemented | Fase 1.5 | Visão de próprias + vizinhas, memória de terreno, guarnição escondida que embosca | [design](features/fog-and-ambush/design.md) |
 | Bot e árvore de comportamento | implemented | MVP | LimboAI orquestra decisões em `BotController` | [arquitetura](ARCHITECTURE.md) |
 | HUD de campanha | implemented | MVP | Recursos, ordens, dock de província, relatório de batalha | [arquitetura](ARCHITECTURE.md) |
 | Save e localização | implemented | MVP | JSON atómico versão 4, textos PT/EN via `Loc` | [arquitetura](ARCHITECTURE.md) |
@@ -70,8 +71,10 @@ Explorar províncias neutras → ganhar ouro, manpower e recurso de facção →
 ## Open questions
 
 - **Suposições a confirmar:** plataforma apenas PC, público 12+, idioma da documentação, sessão de ~76 turnos.
-- **Riscos:** o lore afirma 55% Humanos / 45% Elfos, mas o simulador mede 45% / 55%; o cartão "Ampliar o intervalo de seeds do balance_sim" resolve a divergência antes de qualquer ajuste. A Fase 2 tenta expandir o escopo além da PAP.
+- **Riscos:** o lore afirma 55% Humanos / 45% Elfos; com Terras Altas, picos intransponíveis e névoa, o simulador mede 65% / 35% em 20 seeds (`41000..41019`), todos terminados. A Fase 2 tenta expandir o escopo além da PAP.
 
 ## Change log
+
+**0.2 (2026-11-25):** Terras Altas como quinto bioma, picos intransponíveis, névoa de guerra e ordem de emboscada; save passa à versão 7.
 
 **0.1 (2026-11-21):** primeiro rascunho a partir do lore fornecido e do código.

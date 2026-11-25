@@ -22,6 +22,11 @@ var last_battle: Dictionary = {}
 ## penalty. Kept in the model so the HUD, bot and save all read one value.
 var capital_penalty: Dictionary = {}
 
+## faction -> {province_id: true}. Terrain the faction has ever seen; it stays
+## drawn after the army moves on, but live troop counts only come from the
+## current visibility set below.
+var explored: Dictionary = {}
+
 ## faction -> Array of order dictionaries. Orders are data, never actions.
 var queued_orders: Dictionary = {}
 
@@ -35,6 +40,86 @@ func factions() -> Array[int]:
 
 func is_started() -> bool:
 	return map_state != null
+
+
+# --- Fog of war ----------------------------------------------------------
+
+## Live intelligence: own land and its neighbours. An enemy garrison lying in
+## ambush is invisible even from an adjacent province, including while the
+## ambush order is still only queued for this turn.
+func is_province_visible(faction: int, province_id: String) -> bool:
+	if map_state == null:
+		return false
+	var province := map_state.get_province(province_id)
+	if province == null:
+		return false
+	if province.is_owned_by(faction):
+		return true
+	var adjacent := false
+	for neighbor in map_state.neighbors_of(province_id):
+		if neighbor.is_owned_by(faction):
+			adjacent = true
+			break
+	if not adjacent:
+		return false
+	if province.ambush or _has_queued_ambush_against(faction, province_id):
+		return false
+	return true
+
+
+func is_province_explored(faction: int, province_id: String) -> bool:
+	if is_province_visible(faction, province_id):
+		return true
+	var seen: Dictionary = explored.get(faction, {})
+	return seen.has(province_id)
+
+
+## Records the terrain of everything currently in sight. Called after every
+## resolution, so both factions remember the map but not each other's army.
+func update_all_visibility() -> void:
+	if map_state == null:
+		return
+	for faction: int in factions():
+		var seen: Dictionary = explored.get(faction, {})
+		for province in map_state.provinces:
+			if _geometrically_visible(faction, province):
+				seen[province.id] = true
+		explored[faction] = seen
+
+
+func _geometrically_visible(faction: int, province: ProvinceData) -> bool:
+	if province.is_owned_by(faction):
+		return true
+	for neighbor in map_state.neighbors_of(province.id):
+		if neighbor.is_owned_by(faction):
+			return true
+	return false
+
+
+func _has_queued_ambush_against(viewer: int, province_id: String) -> bool:
+	_ensure_queues()
+	for faction: int in queued_orders.keys():
+		if faction == viewer:
+			continue
+		for order in queued_orders[faction]:
+			if String(order.get("type", "")) == "ambush" \
+					and String(order.get("province_id", "")) == province_id:
+				return true
+	return false
+
+
+## What this faction knows about a province's defence. Hidden armies read as
+## zero: the enemy is entitled to act on the information it actually has.
+func visible_troops(faction: int, province: ProvinceData) -> int:
+	if province == null or not is_province_visible(faction, province.id):
+		return 0
+	return province.defence_troops()
+
+
+func visible_defense_power(faction: int, province: ProvinceData) -> float:
+	if province == null or not is_province_visible(faction, province.id):
+		return 0.0
+	return province.defense_power()
 
 
 ## Pass a seed to rebuild a specific world (used when loading a save);
@@ -53,13 +138,16 @@ func start_new_game_from_map(state: MapState) -> void:
 	last_battle.clear()
 	queued_orders.clear()
 	capital_penalty.clear()
+	explored.clear()
 
 	for faction: int in factions():
 		gold[faction] = Balance.STARTING_GOLD
 		manpower[faction] = Balance.STARTING_MANPOWER
 		faction_resources[faction] = {"aether": 0, "iron": 0}
 		queued_orders[faction] = []
+		explored[faction] = {}
 
+	update_all_visibility()
 	state_changed.emit()
 
 
@@ -308,6 +396,8 @@ func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary)
 		return _fail("unknown province")
 	if not origin.is_owned_by(faction):
 		return _fail("%s is not yours" % origin.display_name)
+	if _has_queued_ambush(faction, from_id):
+		return _fail("%s already has an ambush order this turn" % origin.display_name)
 	if from_id == to_id:
 		return _fail("origin and target are the same province")
 	if not map_state.are_adjacent(from_id, to_id):
@@ -374,6 +464,8 @@ func queue_recruit(faction: int, province_id: String, unit_id: String, count: in
 		return _fail("%s is not yours" % province.display_name)
 	if province.unrest_turns > 0:
 		return _fail("%s is in unrest for %d more turns" % [province.display_name, province.unrest_turns])
+	if _has_queued_ambush(faction, province_id):
+		return _fail("%s already has an ambush order this turn" % province.display_name)
 	if not province.is_city:
 		return _fail("%s is an open corridor — recruitment is only allowed in cities and castles" % province.display_name)
 
@@ -420,6 +512,43 @@ func queue_recruit(faction: int, province_id: String, unit_id: String, count: in
 	}
 
 
+## Hides this province's whole garrison until an enemy army enters it. The
+## order is queued like any other: the enemy never sees it, and it only becomes
+## active when both sides have committed at resolution.
+func queue_ambush(faction: int, province_id: String) -> Dictionary:
+	if map_state == null:
+		return _fail("no game in progress")
+	var province := map_state.get_province(province_id)
+	if province == null:
+		return _fail("unknown province")
+	if not province.is_owned_by(faction):
+		return _fail("%s is not yours" % province.display_name)
+	if not province.can_ambush():
+		return _fail("%s cannot hide an army here" % province.display_name)
+	if _has_queued_ambush(faction, province_id) or has_move_order(faction, province_id):
+		return _fail("%s already has an order this turn" % province.display_name)
+	_ensure_queues()
+	for order in queued_orders[faction]:
+		if String(order.get("type", "")) == "recruit" \
+				and String(order.get("province_id", "")) == province_id:
+			return _fail("%s already has an order this turn" % province.display_name)
+
+	queued_orders[faction].append({
+		"type": "ambush",
+		"faction": faction,
+		"province_id": province_id,
+	})
+	orders_changed.emit()
+	_log("[order] %s queues ambush in %s" % [
+		Balance.faction_name(faction), province.display_name,
+	])
+	return {
+		"ok": true,
+		"kind": "ambush",
+		"province": province_id,
+	}
+
+
 ## Removes one queued order by its index in that faction's queue. Recruits
 ## refund the reserved resources; moves simply stop reserving troops.
 func cancel_order(faction: int, index: int) -> Dictionary:
@@ -458,6 +587,19 @@ func has_move_order(faction: int, from_id: String) -> bool:
 	return false
 
 
+func has_ambush_order(faction: int, province_id: String) -> bool:
+	return _has_queued_ambush(faction, province_id)
+
+
+func has_recruit_order(faction: int, province_id: String) -> bool:
+	_ensure_queues()
+	for order in queued_orders.get(faction, []):
+		if String(order.get("type", "")) == "recruit" \
+				and String(order.get("province_id", "")) == province_id:
+			return true
+	return false
+
+
 func has_queued_orders() -> bool:
 	_ensure_queues()
 	for faction: int in queued_orders.keys():
@@ -490,6 +632,15 @@ func _queued_move_units(faction: int, from_id: String) -> Dictionary:
 			continue
 		_merge_units(total, order.get("units", {}))
 	return total
+
+
+func _has_queued_ambush(faction: int, province_id: String) -> bool:
+	_ensure_queues()
+	for order in queued_orders.get(faction, []):
+		if String(order.get("type", "")) == "ambush" \
+				and String(order.get("province_id", "")) == province_id:
+			return true
+	return false
 
 
 func _queued_attack_count(faction: int, from_id: String) -> int:
@@ -533,6 +684,7 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 			"owner": province.owner_faction,
 			"garrison": province.garrison.duplicate(true),
 			"home_guard": province.home_guard,
+			"ambush": province.ambush,
 		}
 
 	# 2. Recruits appear first, so they can defend but cannot move: moves were
@@ -560,6 +712,14 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 				Balance.faction_name(faction), count, unit_id, province.display_name,
 			])
 
+	# 2b. Ambush orders become active before any battle but after the enemy has
+	# already committed its moves, so nobody can react to a visible ambush.
+	var ambush_orders: Dictionary = {}
+	for faction in queued_orders.keys():
+		for order in queued_orders[faction]:
+			if String(order.get("type", "")) == "ambush":
+				ambush_orders[String(order.get("province_id", ""))] = true
+
 	# 3. Every army leaves its origin at once. `station` is the home garrison
 	# after departures, and is the only defence any province can offer.
 	var station: Dictionary = {}
@@ -568,6 +728,7 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 		station[province_id] = (snap["garrison"] as Dictionary).duplicate(true)
 
 	var moves: Array = []
+	var departed: Dictionary = {}
 	for faction: int in queued_orders.keys():
 		for order in queued_orders.get(faction, []):
 			if String(order.get("type", "")) != "move":
@@ -576,6 +737,9 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 			var units: Dictionary = order.get("units", {}).duplicate(true)
 			if not station.has(from_id):
 				continue
+			# Leaving the position ends the ambush: the hidden army is now on
+			# the march and can no longer spring a trap in its old province.
+			departed[from_id] = true
 			var home: Dictionary = station[from_id]
 			for unit_id: String in units.keys():
 				var left := int(home.get(unit_id, 0)) - int(units[unit_id])
@@ -602,10 +766,13 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 	var final_owner: Dictionary = {}
 	var final_garrison: Dictionary = {}
 	var final_home_guard: Dictionary = {}
+	var final_ambush: Dictionary = {}
 	for province_id: String in snapshot.keys():
 		final_owner[province_id] = int(snapshot[province_id]["owner"])
 		final_garrison[province_id] = (station[province_id] as Dictionary).duplicate(true)
 		final_home_guard[province_id] = int(snapshot[province_id]["home_guard"])
+		final_ambush[province_id] = (ambush_orders.has(province_id) \
+			or bool(snapshot[province_id]["ambush"])) and not departed.has(province_id)
 	var pending_returns: Array = []
 
 	# 5. Swaps: A invades B's province while B invades A's. Both armies meet in
@@ -682,7 +849,7 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 	for target_id: String in targets:
 		_resolve_destination(
 			target_id, by_target[target_id], snapshot, station, rng, summary,
-			final_owner, final_garrison, final_home_guard, pending_returns
+			final_owner, final_garrison, final_home_guard, final_ambush, pending_returns
 		)
 
 	# 7. Independent swap battles are also ordered by the seed, never by faction.
@@ -731,9 +898,13 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 		province.owner_faction = int(final_owner[province.id])
 		province.garrison = (final_garrison[province.id] as Dictionary).duplicate(true)
 		province.home_guard = int(final_home_guard.get(province.id, 0))
+		province.ambush = bool(final_ambush.get(province.id, false))
 
 	_apply_capital_losses(snapshot)
 	_apply_conquest_unrest(snapshot)
+	# Flares and hidden garrisons change with the board, so recompute what each
+	# side can see before the next planning phase begins.
+	update_all_visibility()
 
 	clear_orders()
 	state_changed.emit()
@@ -750,6 +921,7 @@ func _resolve_destination(
 	final_owner: Dictionary,
 	final_garrison: Dictionary,
 	final_home_guard: Dictionary,
+	final_ambush: Dictionary,
 	pending_returns: Array,
 ) -> void:
 	var owner := int(snapshot[target_id]["owner"])
@@ -785,11 +957,11 @@ func _resolve_destination(
 		if owner == Balance.Faction.NEUTRAL:
 			if incoming.size() == 1:
 				var only_faction: int = int(incoming.keys()[0])
-				_arrival(target_id, incoming[only_faction], only_faction, summary, final_owner, final_garrison, final_home_guard)
+				_arrival(target_id, incoming[only_faction], only_faction, summary, final_owner, final_garrison, final_home_guard, final_ambush)
 			elif incoming.size() > 1:
 				_resolve_contest(
 					target_id, incoming, orders_by_faction, rng, summary,
-					final_owner, final_garrison, final_home_guard, pending_returns
+					final_owner, final_garrison, final_home_guard, final_ambush, pending_returns
 				)
 		else:
 			final_garrison[target_id] = defence
@@ -800,11 +972,11 @@ func _resolve_destination(
 	if not has_defence:
 		if attackers.size() == 1:
 			var attacker_faction: int = int(attackers.keys()[0])
-			_arrival(target_id, attackers[attacker_faction], attacker_faction, summary, final_owner, final_garrison, final_home_guard)
+			_arrival(target_id, attackers[attacker_faction], attacker_faction, summary, final_owner, final_garrison, final_home_guard, final_ambush)
 		else:
 			_resolve_contest(
 				target_id, attackers, orders_by_faction, rng, summary,
-				final_owner, final_garrison, final_home_guard, pending_returns
+				final_owner, final_garrison, final_home_guard, final_ambush, pending_returns
 			)
 		return
 
@@ -834,7 +1006,10 @@ func _resolve_destination(
 	battle_target.owner_faction = owner
 	battle_target.garrison = defence.duplicate(true)
 	battle_target.home_guard = militia
+	battle_target.ambush = bool(final_ambush.get(target_id, false))
 	var result := CombatResolver.resolve(attack_units.duplicate(true), battle_target, attacker_faction, rng)
+	# A hidden army is revealed the moment it strikes, win or lose.
+	final_ambush[target_id] = false
 	result["from_id"] = String(attacker_orders[0]["from"]) if not attacker_orders.is_empty() else ""
 	result["to_id"] = target_id
 	result["from_name"] = _province_name(String(result["from_id"]))
@@ -848,7 +1023,8 @@ func _resolve_destination(
 		result["from_name"], target.display_name,
 		float(result["attacker_power"]), float(result["defender_power"]),
 		int(result["attacker_losses"]), int(result["defender_losses"]),
-		"CAPTURED" if bool(result["captured"]) else "held",
+		("AMBUSH! " if bool(result["ambush"]) else "")
+			+ ("CAPTURED" if bool(result["captured"]) else "held"),
 	])
 
 	if bool(result["captured"]):
@@ -873,6 +1049,7 @@ func _resolve_contest(
 	final_owner: Dictionary,
 	final_garrison: Dictionary,
 	final_home_guard: Dictionary,
+	final_ambush: Dictionary,
 	pending_returns: Array,
 ) -> void:
 	var factions_in: Array = incoming.keys()
@@ -908,11 +1085,13 @@ func _resolve_contest(
 		final_owner[target_id] = first
 		final_garrison[target_id] = (result["survivors_a"] as Dictionary).duplicate(true)
 		final_home_guard[target_id] = 0
+		final_ambush[target_id] = false
 		_pending_returns(result["survivors_b"], orders_by_faction.get(second, []), second, pending_returns, rng)
 	else:
 		final_owner[target_id] = second
 		final_garrison[target_id] = (result["survivors_b"] as Dictionary).duplicate(true)
 		final_home_guard[target_id] = 0
+		final_ambush[target_id] = false
 		_pending_returns(result["survivors_a"], orders_by_faction.get(first, []), first, pending_returns, rng)
 
 
@@ -980,6 +1159,7 @@ func _arrival(
 	final_owner: Dictionary,
 	final_garrison: Dictionary,
 	final_home_guard: Dictionary,
+	final_ambush: Dictionary,
 ) -> void:
 	var owner := int(final_owner.get(province_id, Balance.Faction.NEUTRAL))
 	var garrison: Dictionary = (final_garrison.get(province_id, {}) as Dictionary).duplicate(true)
@@ -990,6 +1170,7 @@ func _arrival(
 	final_owner[province_id] = faction
 	# A captured province loses its levy and starts raising a new one next turn.
 	final_home_guard[province_id] = 0
+	final_ambush[province_id] = false
 	summary["captures"].append({
 		"faction": faction,
 		"province": province_id,

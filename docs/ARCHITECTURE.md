@@ -28,7 +28,7 @@ Autoloads: `Settings`, `Game` (GameState), `TurnManager`. O loop de jogo é orie
 
 | Módulo / pasta | Responsabilidade | Usado por |
 |---|---|---|
-| `scripts/core/game_state.gd` | Fonte de verdade sem referências a nós; filas de ordens e resolução | [turnos](features/turn-resolution/design.md), [combate](features/combat-and-units/design.md) |
+| `scripts/core/game_state.gd` | Fonte de verdade sem referências a nós; filas de ordens, resolução e visibilidade | [turnos](features/turn-resolution/design.md), [combate](features/combat-and-units/design.md), [névoa](features/fog-and-ambush/design.md) |
 | `scripts/core/turn_manager.gd` | Máquina de fases e sinais | [turnos](features/turn-resolution/design.md) |
 | `scripts/core/combat_resolver.gd`, `save_system.gd`, `loc.gd`, `settings.gd` | Cálculo puro, persistência, localização, preferências | várias |
 | `scripts/data/balance.gd` | Tabela central de constantes de tuning | [combate](features/combat-and-units/design.md), [mapa](features/map-and-provinces/design.md) |
@@ -46,6 +46,7 @@ Autoloads: `Settings`, `Game` (GameState), `TurnManager`. O loop de jogo é orie
 - **Dados:** `Resource`/`RefCounted` guardam ids e valores, nunca referências a nós. `MapState` detém o grafo e as consultas de vitória.
 - **Persistência:** `SaveSystem` é o único escritor de `user://savegame.json` (JSON atómico, versão 4); `Settings` é o único escritor de `user://settings.cfg`.
 - **Aleatoriedade:** o mapa e a resolução usam seeds; os destinos são baralhados por seed para não haver vantagem de facção.
+- **Névoa:** nenhum sistema lê `defence_troops()`/`defense_power()` de uma província alheia sem passar por `GameState.visible_troops()`/`visible_defense_power()`; o bot e o HUD partilham o mesmo filtro.
 - **Render e UI:** `UiStyle` detém paleta, escala de fonte e estilos; `UiIcon` detém glifos. Não há glifos escritos à mão por ecrã.
 - **Input:** ações nomeadas no InputMap e atalhos no HUD; gamepad por implementar.
 - **Localização:** todo o texto visível passa por `Loc`, com chave em `pt` e `en`.
@@ -69,9 +70,10 @@ docs/             GDD, lore, notas de funcionalidades (este guia)
 ```bash
 godot --headless --path . --script res://scripts/tools/worldgen_sweep.gd
 godot --headless --path . --script res://scripts/tools/balance_sim.gd
+godot --headless --path . --script res://scripts/tools/ambush_check.gd
 ```
 
-`worldgen_sweep.gd` verifica 24 seeds de geração e terreno; `balance_sim.gd` corre 20 partidas AI-vs-AI (`41000..41019`). Falta uma verificação headless de arranque pelo menu principal (Novo Jogo + Continuar) — está como cartão no quadro.
+`worldgen_sweep.gd` verifica 24 seeds de geração e terreno (incluindo picos e Terras Altas); `balance_sim.gd` corre 20 partidas AI-vs-AI (`41000..41019`); `ambush_check.gd` verifica visibilidade, bónus de emboscada e consumo da ordem. Falta uma verificação headless de arranque pelo menu principal (Novo Jogo + Continuar) — está como cartão no quadro.
 
 ## 7. Riscos técnicos
 

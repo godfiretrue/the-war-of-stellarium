@@ -6,7 +6,7 @@ extends Control
 ## The HUD draws every icon from primitives instead of font glyphs so it never
 ## depends on emoji coverage in the system font and keeps one visual weight.
 
-enum Kind { COIN, MANPOWER, ETHER, SHIELD, MOVE, RECRUIT, SWORD, BOW }
+enum Kind { COIN, MANPOWER, ETHER, SHIELD, MOVE, RECRUIT, SWORD, BOW, AMBUSH }
 
 @export var kind: Kind = Kind.COIN:
 	set(value):
@@ -45,6 +45,8 @@ func _draw() -> void:
 			_draw_sword(center, radius)
 		Kind.BOW:
 			_draw_bow(center, radius)
+		Kind.AMBUSH:
+			_draw_ambush(center, radius)
 
 
 func _draw_coin(center: Vector2, radius: float) -> void:
@@ -155,3 +157,22 @@ func _draw_bow(center: Vector2, radius: float) -> void:
 		center + Vector2(radius * 0.20, -radius * 0.26),
 		center + Vector2(radius * 0.20, radius * 0.26),
 	]), tint)
+
+
+## Hooded eye for ambush: an outline with a slashed pupil.
+func _draw_ambush(center: Vector2, radius: float) -> void:
+	var eye := PackedVector2Array([
+		center + Vector2(-radius * 0.90, 0),
+		center + Vector2(0, -radius * 0.58),
+		center + Vector2(radius * 0.90, 0),
+		center + Vector2(0, radius * 0.58),
+	])
+	var closed := eye.duplicate()
+	closed.append(eye[0])
+	draw_polyline(closed, tint, 1.4, true)
+	draw_circle(center, radius * 0.20, tint)
+	draw_line(
+		center + Vector2(-radius * 0.34, radius * 0.46),
+		center + Vector2(radius * 0.34, -radius * 0.46),
+		_alpha(0.60), 1.2, true
+	)

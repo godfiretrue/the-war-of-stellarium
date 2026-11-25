@@ -40,6 +40,11 @@ static func resolve(
 
 	var defense_power := target.defense_power()
 	defense_power *= random.randf_range(Balance.COMBAT_RANDOM_MIN, Balance.COMBAT_RANDOM_MAX)
+	# An ambushing garrison strikes from cover: stronger defence and a heavier
+	# price for the army that walked into it.
+	var ambushed := target.ambush
+	if ambushed:
+		defense_power *= Balance.AMBUSH_DEFENSE_MULTIPLIER
 
 	var total_power := attack_power + defense_power
 	var ratio := 0.5
@@ -48,6 +53,8 @@ static func resolve(
 
 	var attacker_losses := int(ceil(float(attacker_total) * (1.0 - ratio) * Balance.ATTACKER_LOSS_FACTOR))
 	var defender_losses := int(ceil(float(defender_total) * ratio * Balance.DEFENDER_LOSS_FACTOR))
+	if ambushed:
+		attacker_losses = int(ceil(float(attacker_losses) * Balance.AMBUSH_ATTACKER_LOSS_MULTIPLIER))
 	attacker_losses = clampi(attacker_losses, 0, attacker_total)
 	defender_losses = clampi(defender_losses, 0, defender_total)
 
@@ -149,5 +156,6 @@ static func _result(
 		"defender_survivors": defender_survivors,
 		"defender_home_guard": target.home_guard,
 		"home_guard_losses": 0,
+		"ambush": target.ambush,
 		"captured": captured,
 	}

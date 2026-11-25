@@ -23,10 +23,11 @@ the capital is a temporary penalty rather than a loss, and the bot leaves a
 tiered garrison behind when it marches. See "Rules implemented" and "Balance
 findings" for the numbers behind each.
 
-Provinces have four terrains (plains, forest, coast, mountains) plus a
-`is_fortress` role: terrain drives gold/manpower income and defence, while a
-fortress adds defence and costs gold every turn, so the map has real strategic
-targets instead of 21 identical provinces.
+Provinces have five terrains (plains, forest, coast, mountains, Highlands) plus
+a `is_fortress` role: terrain drives gold/manpower income and defence, while a
+fortress adds defence and costs gold every turn. The highest mountain provinces
+are impassable peaks (removed from the graph); fog of war hides enemy garrisons
+and `queue_ambush()` can hide your own until an enemy army walks into it.
 
 Engine: **Godot 4.7.2-stable** (the brief said 4.6.1; the project was created
 with 4.7 features and runs on the installed editor). GDScript only.
@@ -320,8 +321,12 @@ run on the same seeds, so the effect of one rule is isolated:
 | doctrine, attack keeps 1, reposition keeps the tier | Elves 10, Humans 7, 3 unfinished; 50% / 35% / 15%; 111.5 turns |
 | **final:** as above, but a stalled front attacks with everything | **Humans 9, Elves 11; 45% / 55%; 116.8 turns; 0 unfinished; 0 queue failures** |
 | **terrain economy + fortresses (v0.5):** Plains 13/10, Forest 12/6, Coast 20/2, Mountains 19/4; five fortresses at 4 gold/turn | **Humans 9, Elves 11; 45% / 55%; 76.0 turns; 0 unfinished; 0 queue failures** |
+| **Highlands + peaks + fog + ambush (v0.7):** Highlands 14/5 and ×1.5 defence, up to 6 impassable peaks, 1-tile vision, hidden ambush orders | **Humans 13, Elves 7; 65% / 35%; 74.8 turns; 0 unfinished; 0 queue failures** |
 
-Target met: no faction above ~55% and average length far above 10 turns.
+Target met for game length; the win split now favours Humans by 30 points and
+is the next balance card. An earlier version of ambush froze border armies
+forever (11/20 unfinished); letting a hidden army march out of its ambush
+restored 20/20 finished games.
 
 What each measurement says:
 

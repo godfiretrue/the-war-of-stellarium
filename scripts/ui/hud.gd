@@ -65,7 +65,8 @@ var _pulse_hot := false
 @onready var _garrison_list: HBoxContainer = $Root/BottomPanel/PanelRow/GarrisonBox/GarrisonList
 @onready var _recruit_a: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitA
 @onready var _recruit_b: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitB
-@onready var _march: Button = $Root/BottomPanel/PanelRow/ActionsBox/March
+@onready var _march: Button = $Root/BottomPanel/PanelRow/ActionsBox/ActionRow/March
+@onready var _ambush: Button = $Root/BottomPanel/PanelRow/ActionsBox/ActionRow/Ambush
 @onready var _end_turn: Button = $Root/EndTurn
 @onready var _orders_tab: Button = $Root/OrdersTab
 @onready var _orders_card: PanelContainer = $Root/OrdersCard
@@ -132,6 +133,7 @@ func _connect_signals() -> void:
 	_recruit_a.pressed.connect(_on_recruit.bind(0))
 	_recruit_b.pressed.connect(_on_recruit.bind(1))
 	_march.pressed.connect(_on_march_pressed)
+	_ambush.pressed.connect(_on_ambush_pressed)
 	_end_turn.pressed.connect(_on_end_turn_pressed)
 	_menu_button.pressed.connect(_open_menu)
 	_menu_popup.id_pressed.connect(_on_menu_id)
@@ -155,6 +157,7 @@ func _setup_focus_neighbors() -> void:
 		_battle_dismiss,   # battle card, right edge
 		_end_turn,         # bottom right
 		_march,            # bottom centre
+		_ambush,           # bottom centre, beside March
 		_recruit_b,
 		_recruit_a,        # bottom left-centre
 		_orders_tab,       # left edge
@@ -199,6 +202,7 @@ func _style() -> void:
 	UiStyle.apply_hud_button(_recruit_a)
 	UiStyle.apply_hud_button(_recruit_b)
 	UiStyle.apply_hud_button(_march)
+	UiStyle.apply_hud_button(_ambush)
 	UiStyle.apply_primary_button(_end_turn)
 	UiStyle.apply_ghost_button(_menu_button)
 	UiStyle.apply_ghost_button(_orders_collapse)
@@ -320,6 +324,7 @@ func _refresh_economy() -> void:
 func _refresh_static_text() -> void:
 	_faction_name.text = Loc.faction_name(PLAYER)
 	_march.text = Loc.t("march")
+	_ambush.text = Loc.t("ambush")
 	_end_turn.text = Loc.t("end_turn")
 
 	_orders_title.text = Loc.t("orders_title")
@@ -370,6 +375,20 @@ func _refresh_selection() -> void:
 	_name.add_theme_color_override(
 		"font_color", UiStyle.GOLD if province.is_capital else UiStyle.TEXT
 	)
+
+	# Fog of war: remembered terrain stays on the map, but live garrison
+	# intelligence (including a hidden ambush) is withheld from the player.
+	var visible := game.is_province_visible(PLAYER, province.id)
+	var explored := game.is_province_explored(PLAYER, province.id)
+	if not visible:
+		_name.text = province.display_name if explored else Loc.t("fog_unexplored")
+		_name.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
+		_meta.text = Loc.t("fog_hidden") if explored else ""
+		_meta.tooltip_text = ""
+		_clear_stats()
+		_refresh_garrison(null)
+		return
+
 	_meta.text = "%s · %s · %s · %s" % [
 		role,
 		Loc.territory_type(province.territory_type),
@@ -378,6 +397,10 @@ func _refresh_selection() -> void:
 	]
 	if province.unrest_turns > 0:
 		_meta.text += " · " + Loc.t("unrest", [province.unrest_turns])
+	if province.ambush:
+		_meta.text += " · " + Loc.t("ambush_active")
+	if province.is_impassable:
+		_meta.text += " · " + Loc.t("peak_impassable")
 
 	# Terrain and fortress are the two inputs of the economy and the defence
 	# multiplier, so the dock explains both without adding another text row.
@@ -524,6 +547,16 @@ func _refresh_buttons() -> void:
 	_march.disabled = not can_march
 	_march.tooltip_text = _march_reason(player_planning, province, owned)
 
+	var ambush_busy := province != null and (
+		game.has_move_order(PLAYER, province.id)
+		or game.has_recruit_order(PLAYER, province.id)
+		or game.has_ambush_order(PLAYER, province.id)
+	)
+	var ambush_ready := player_planning and owned and province != null \
+		and province.can_ambush() and not ambush_busy
+	_ambush.disabled = not ambush_ready
+	_ambush.tooltip_text = _ambush_reason(player_planning, province, owned, ambush_busy)
+
 	# March is the expected next step while a move is armed; otherwise ending the
 	# turn is. Only one of them wears the gold primary style at a time.
 	if march_origin_id.is_empty():
@@ -618,6 +651,24 @@ func _march_reason(player_planning: bool, province: ProvinceData, owned: bool) -
 	return Loc.t("tip_march")
 
 
+func _ambush_reason(player_planning: bool, province: ProvinceData, owned: bool, busy: bool) -> String:
+	if not player_planning:
+		return Loc.t("reason_not_planning")
+	if province == null:
+		return Loc.t("reason_no_selection")
+	if not owned:
+		return Loc.t("reason_not_owned")
+	if province.ambush:
+		return Loc.t("ambush_reason_active")
+	if busy:
+		return Loc.t("ambush_reason_busy")
+	if province.total_troops() <= 0:
+		return Loc.t("ambush_reason_troops")
+	if not province.is_ambush_ground():
+		return Loc.t("ambush_reason_ground")
+	return Loc.t("tip_ambush")
+
+
 ## Gentle pulse while the player still has orders queued or affordable troops
 ## waiting to be recruited; completely still otherwise.
 func _update_end_turn_pulse() -> void:
@@ -703,6 +754,18 @@ func _on_march_pressed() -> void:
 	if map_view != null:
 		map_view.set_march_targets(PackedStringArray(province.neighbors), province.id)
 	_refresh_buttons()
+
+
+func _on_ambush_pressed() -> void:
+	if not turn_manager.is_player_planning() or selected_province_id.is_empty():
+		return
+	_cancel_march()
+	var result := game.queue_ambush(PLAYER, selected_province_id)
+	if not bool(result.get("ok", false)):
+		_show_toast(Loc.reason(String(result.get("reason", ""))))
+	else:
+		_show_toast(Loc.t("order_short_ambush"))
+	_refresh()
 
 
 func _on_end_turn_pressed() -> void:
@@ -849,6 +912,8 @@ func _input(event: InputEvent) -> void:
 			_on_end_turn_pressed()
 		KEY_M:
 			_on_march_pressed()
+		KEY_A:
+			_on_ambush_pressed()
 		KEY_ESCAPE:
 			if not march_origin_id.is_empty():
 				_cancel_march()
@@ -913,7 +978,9 @@ func _render_battles() -> void:
 				"font_size", UiStyle.FONT_BODY if index == 0 else UiStyle.FONT_SMALL
 			)
 			var color := UiStyle.TEXT
-			if index == 1:
+			if index == 0 and bool(result.get("ambush", false)):
+				color = UiStyle.DANGER
+			elif index == 1:
 				color = UiStyle.TEXT_DIM
 			elif index >= 2:
 				color = UiStyle.GOLD if bool(result.get("captured", false)) else UiStyle.TEXT_DIM
@@ -973,6 +1040,8 @@ func _battle_text(result: Dictionary) -> String:
 	var province := _province(String(result.get("province_id", "")))
 	if province != null and province.is_city:
 		title = Loc.t("battle_siege", [province.display_name])
+	if bool(result.get("ambush", false)):
+		title = Loc.t("battle_ambush", [to_name])
 
 	return "%s\n%s\n%s" % [
 		title,
@@ -1050,12 +1119,18 @@ func _order_row(order: Dictionary, index: int) -> PanelContainer:
 	line.add_theme_constant_override("separation", 6)
 	row.add_child(line)
 
-	var is_move := String(order.get("type", "")) == "move"
+	var order_type := String(order.get("type", ""))
+	var is_move := order_type == "move"
+	var is_ambush := order_type == "ambush"
 	var icon := UiIcon.new()
 	icon.custom_minimum_size = Vector2(13, 13)
 	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	icon.kind = UiIcon.Kind.MOVE if is_move else UiIcon.Kind.RECRUIT
-	icon.tint = UiStyle.ACCENT if is_move else UiStyle.GOLD
+	icon.kind = UiIcon.Kind.MOVE if is_move else (
+		UiIcon.Kind.AMBUSH if is_ambush else UiIcon.Kind.RECRUIT
+	)
+	icon.tint = UiStyle.ACCENT if is_move else (
+		UiStyle.DANGER if is_ambush else UiStyle.GOLD
+	)
 	line.add_child(icon)
 
 	var label := Label.new()
@@ -1123,11 +1198,14 @@ func _card_list_height(rows: int, row_height: float) -> float:
 
 
 func _order_short_text(order: Dictionary) -> String:
-	if String(order.get("type", "")) == "move":
+	var order_type := String(order.get("type", ""))
+	if order_type == "move":
 		return Loc.t("order_short_move", [
 			_province_name(String(order.get("from_id", ""))),
 			_province_name(String(order.get("to_id", ""))),
 		])
+	if order_type == "ambush":
+		return Loc.t("order_short_ambush")
 	return Loc.t("order_short_recruit", [
 		int(order.get("count", 0)), Loc.unit_name(String(order.get("unit_id", ""))),
 	])
@@ -1142,13 +1220,16 @@ func _order_count_text(order: Dictionary) -> String:
 
 
 func _order_text(order: Dictionary) -> String:
-	if String(order.get("type", "")) == "move":
+	var order_type := String(order.get("type", ""))
+	if order_type == "move":
 		var units: Dictionary = order.get("units", {})
 		return Loc.t("order_move", [
 			_province_name(String(order.get("from_id", ""))),
 			_province_name(String(order.get("to_id", ""))),
 			CombatResolver.troop_count(units),
 		])
+	if order_type == "ambush":
+		return Loc.t("order_ambush", [_province_name(String(order.get("province_id", "")))])
 	return Loc.t("order_recruit", [
 		int(order.get("count", 0)),
 		Loc.unit_name(String(order.get("unit_id", ""))),

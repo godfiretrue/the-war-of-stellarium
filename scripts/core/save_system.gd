@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 6
+const VERSION := 7
 
 
 static func has_save() -> bool:
@@ -105,6 +105,7 @@ static func apply_save(game: GameState, data: Dictionary) -> void:
 		return
 	_apply_factions(game, data.get("factions", {}))
 	_apply_provinces(game, data.get("provinces", []))
+	game.update_all_visibility()
 	game.state_changed.emit()
 
 
@@ -118,9 +119,9 @@ static func _migrate(raw: Dictionary) -> Dictionary:
 		raw["world_scale"] = 1.0
 		raw["version"] = VERSION
 		return raw
-	# Saves store the world seed and regenerate the map from it, so any change
-	# to world generation renames/moves provinces and invalidates the province
-	# ids in the file. Refuse unknown versions instead of loading a broken game.
+	# Version 6 predates Highlands, impassable peaks and fog of war. Worldgen
+	# changed with it, so province ids in those saves no longer match a rebuilt
+	# map. Refuse them instead of loading a broken campaign.
 	if version != VERSION:
 		return {}
 	return raw
@@ -129,11 +130,13 @@ static func _migrate(raw: Dictionary) -> Dictionary:
 static func _serialize_factions(game: GameState) -> Dictionary:
 	var factions := {}
 	for faction: int in game.factions():
+		var seen: Dictionary = game.explored.get(faction, {})
 		factions[str(faction)] = {
 			"gold": game.get_gold(faction),
 			"manpower": game.get_manpower(faction),
 			"resources": game.faction_resources.get(faction, {}).duplicate(),
 			"capital_penalty": int(game.capital_penalty.get(faction, 0)),
+			"explored": seen.keys(),
 		}
 	return factions
 
@@ -147,6 +150,7 @@ static func _serialize_provinces(map_state: MapState) -> Array:
 			"garrison": province.garrison.duplicate(),
 			"home_guard": province.home_guard,
 			"unrest": province.unrest_turns,
+			"ambush": province.ambush,
 		})
 	return provinces
 
@@ -165,6 +169,11 @@ static func _apply_factions(game: GameState, factions: Dictionary) -> void:
 			stock[resource_key] = int(saved_resources[resource_key])
 		game.faction_resources[faction] = stock
 
+		var seen: Dictionary = {}
+		for province_id in entry.get("explored", []):
+			seen[String(province_id)] = true
+		game.explored[faction] = seen
+
 
 static func _apply_provinces(game: GameState, provinces: Array) -> void:
 	for raw_entry in provinces:
@@ -177,6 +186,7 @@ static func _apply_provinces(game: GameState, provinces: Array) -> void:
 		province.owner_faction = int(entry.get("owner", Balance.Faction.NEUTRAL))
 		province.home_guard = int(entry.get("home_guard", province.home_guard_cap()))
 		province.unrest_turns = int(entry.get("unrest", 0))
+		province.ambush = bool(entry.get("ambush", false))
 		province.garrison.clear()
 
 		var garrison: Dictionary = entry.get("garrison", {})

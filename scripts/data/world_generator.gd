@@ -785,14 +785,16 @@ func _assemble_state() -> MapState:
 		if is_coast:
 			coast_cells[label] += 1
 
-	var adjacency: Array = []
+	# Full adjacency before any peak is removed. Impassable peaks are chosen
+	# next, then the playable graph is rebuilt from this table.
+	var full_adjacency: Array = []
 	for _i in count:
-		adjacency.append([])
+		full_adjacency.append([])
 	for a in count:
 		for b in range(a + 1, count):
 			if edge_counts[a * count + b] >= 3:
-				(adjacency[a] as Array).append(b)
-				(adjacency[b] as Array).append(a)
+				(full_adjacency[a] as Array).append(b)
+				(full_adjacency[b] as Array).append(a)
 
 	var centers := _visual_centers(count)
 
@@ -856,7 +858,31 @@ func _assemble_state() -> MapState:
 		province.capital_of = province.owner_faction if province.is_capital else Balance.Faction.NEUTRAL
 		provinces.append(province)
 
-	_designate_cities(provinces, adjacency, coast_cells, river_cells)
+	# Peaks and Highlands are a layer on top of the four base terrains. Anchors
+	# are exempt so story-critical places keep their authored type and route.
+	var candidates := _special_candidates(provinces, cells_of, sum_elev, mountain_cells)
+	var peaks := _choose_peaks(candidates, full_adjacency, count)
+	var highlands := _choose_highlands(candidates, peaks)
+	for index: int in peaks.keys():
+		provinces[index].is_impassable = true
+	for index: int in highlands:
+		provinces[index].terrain = Balance.Terrain.HIGHLANDS
+		provinces[index].resource_type = Balance.terrain_resource(Balance.Terrain.HIGHLANDS)
+		if provinces[index].territory_type == "Highlands":
+			provinces[index].territory_type = "Highland Stronghold"
+
+	# The playable graph drops every edge touching a peak. Bot pathing, holdout
+	# validation and the player's march highlights all read this filtered graph.
+	var adjacency: Array = []
+	for index in count:
+		var linked: Array = []
+		if not peaks.has(index):
+			for neighbor_index: int in full_adjacency[index]:
+				if not peaks.has(neighbor_index):
+					linked.append(neighbor_index)
+		adjacency.append(linked)
+
+	_designate_cities(provinces, adjacency, coast_cells, river_cells, peaks)
 	_distribute_ownership(provinces, adjacency)
 
 	for index in count:
@@ -880,6 +906,98 @@ func _assemble_state() -> MapState:
 	state.river_widths = PackedFloat32Array(_river_widths)
 	state.field_image = _build_field_image()
 	return state
+
+
+## Mountain provinces ranked by height, excluding the authored anchors. The
+## same ranking feeds both the impassable peaks and the Highlands band, so the
+## two never overlap and the result is stable for a given seed.
+func _special_candidates(
+	provinces: Array[ProvinceData],
+	cells_of: Array,
+	sum_elev: PackedFloat32Array,
+	mountain_cells: PackedInt32Array,
+) -> Array[int]:
+	var scored: Array[Dictionary] = []
+	for index in provinces.size():
+		if index < _anchors.size():
+			continue
+		# Coast is low ground by definition; every other province can become
+		# high ground. Ranking all of them guarantees Highlands even on seeds
+		# where the base classifier found no mountain province at all.
+		if provinces[index].terrain == Balance.Terrain.COAST:
+			continue
+		var cell_count := maxi((cells_of[index] as Array).size(), 1)
+		var mean_elev := sum_elev[index] / float(cell_count)
+		var mountain_fraction := float(mountain_cells[index]) / float(cell_count)
+		var score := mean_elev + 0.12 * mountain_fraction
+		if mean_elev >= Balance.HIGHLANDS_MIN_ELEVATION \
+				or mountain_fraction >= Balance.HIGHLANDS_MIN_MOUNTAIN_FRACTION:
+			score += 0.05
+		scored.append({"index": index, "score": score})
+	scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a["score"]) > float(b["score"])
+	)
+	var result: Array[int] = []
+	for entry in scored:
+		result.append(int(entry["index"]))
+	return result
+
+
+## Removes the top peaks only while the remaining graph stays connected. If a
+## peak would cut the map in two, fewer peaks are used; zero peaks still yields
+## a valid world, so generation never loops forever over this step.
+func _choose_peaks(candidates: Array[int], full_adjacency: Array, count: int) -> Dictionary:
+	var target := mini(
+		Balance.PEAK_MAX_PROVINCES,
+		roundi(float(count) * Balance.PEAK_PROVINCE_FRACTION),
+	)
+	var chosen: Dictionary = {}
+	for amount in range(mini(target, candidates.size()), -1, -1):
+		chosen.clear()
+		for i in amount:
+			chosen[candidates[i]] = true
+		if _connected_without(full_adjacency, chosen, count):
+			return chosen.duplicate()
+	return {}
+
+
+func _connected_without(full_adjacency: Array, excluded: Dictionary, count: int) -> bool:
+	var start := -1
+	for index in count:
+		if not excluded.has(index):
+			start = index
+			break
+	if start < 0:
+		return false
+	var seen: Dictionary = {start: true}
+	var queue: Array[int] = [start]
+	var head := 0
+	while head < queue.size():
+		var current: int = queue[head]
+		head += 1
+		for neighbor_index: int in full_adjacency[current]:
+			if excluded.has(neighbor_index) or seen.has(neighbor_index):
+				continue
+			seen[neighbor_index] = true
+			queue.append(neighbor_index)
+	# Capitals are anchors and therefore never excluded; a connected component
+	# that holds every passable province necessarily holds both of them.
+	return seen.size() == count - excluded.size()
+
+
+func _choose_highlands(candidates: Array[int], peaks: Dictionary) -> Array[int]:
+	var target := maxi(2, mini(
+		Balance.HIGHLANDS_MAX_PROVINCES,
+		roundi(float(candidates.size()) * Balance.HIGHLANDS_PROVINCE_FRACTION),
+	))
+	var result: Array[int] = []
+	for index: int in candidates:
+		if result.size() >= target:
+			break
+		if peaks.has(index):
+			continue
+		result.append(index)
+	return result
 
 
 ## Cell farthest from the province border: a good place for the label.
@@ -956,10 +1074,16 @@ func _unique_name(kind: String, used: Dictionary) -> String:
 
 ## Adds a handful of towns in good spots (flat, wet, coastal) on top of the
 ## anchors, keeping them apart from each other.
-func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_cells: PackedInt32Array, river_cells: PackedInt32Array) -> void:
+func _designate_cities(
+	provinces: Array[ProvinceData],
+	adjacency: Array,
+	coast_cells: PackedInt32Array,
+	river_cells: PackedInt32Array,
+	peaks: Dictionary,
+) -> void:
 	var scored: Array[Dictionary] = []
 	for index in provinces.size():
-		if index < _anchors.size():
+		if index < _anchors.size() or peaks.has(index):
 			continue
 		var province := provinces[index]
 		var score := _rng.randf() * 0.4
@@ -972,6 +1096,8 @@ func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_c
 				score += 0.5
 			Balance.Terrain.MOUNTAINS:
 				score += 0.2
+			Balance.Terrain.HIGHLANDS:
+				score += 0.35
 		if river_cells[index] > 5:
 			score += 0.5
 		if coast_cells[index] > 8:
@@ -1015,7 +1141,7 @@ func _designate_cities(provinces: Array[ProvinceData], adjacency: Array, coast_c
 
 func _promote_city(province: ProvinceData, river_cells: int, coast_cells: int) -> void:
 	province.is_city = true
-	if province.terrain == Balance.Terrain.MOUNTAINS:
+	if province.terrain == Balance.Terrain.MOUNTAINS or province.terrain == Balance.Terrain.HIGHLANDS:
 		province.is_fortress = true
 		province.territory_type = "Fortress"
 	elif province.terrain == Balance.Terrain.COAST:

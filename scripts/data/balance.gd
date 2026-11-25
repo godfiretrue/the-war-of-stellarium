@@ -12,8 +12,9 @@ extends RefCounted
 ## penalty, garrison doctrine); see AI_CONTEXT.md for the 20-game measurements.
 
 enum Faction { NEUTRAL = -1, HUMANS = 0, ELVES = 1 }
-## MOUNTAINS keeps its old value so nothing that stored the integer breaks.
-enum Terrain { PLAINS = 0, MOUNTAINS = 1, FOREST = 2, COAST = 3 }
+## Existing values are kept so saved integers keep their meaning. HIGHLANDS is
+## the defensive fifth biome: high, rocky ground that is still passable.
+enum Terrain { PLAINS = 0, MOUNTAINS = 1, FOREST = 2, COAST = 3, HIGHLANDS = 4 }
 
 const PLAYER_FACTION := Faction.HUMANS
 
@@ -28,14 +29,17 @@ const TERRAIN_NAMES := {
 	Terrain.MOUNTAINS: "Mountains",
 	Terrain.FOREST: "Forest",
 	Terrain.COAST: "Coast",
+	Terrain.HIGHLANDS: "Highlands",
 }
 
-## Multiplier applied to a defending army's power, by terrain.
+## Multiplier applied to a defending army's power, by terrain. Highlands are
+## the best defensible ground that can still be marched through.
 const TERRAIN_DEFENSE := {
 	Terrain.PLAINS: 1.0,
 	Terrain.MOUNTAINS: 1.35,
 	Terrain.FOREST: 1.15,
 	Terrain.COAST: 1.0,
+	Terrain.HIGHLANDS: 1.5,
 }
 
 ## Faction resource produced by each terrain type. Humans draw Aether from the
@@ -47,6 +51,7 @@ const TERRAIN_RESOURCE := {
 	Terrain.MOUNTAINS: "iron",
 	Terrain.FOREST: "aether",
 	Terrain.COAST: "aether",
+	Terrain.HIGHLANDS: "iron",
 }
 
 const RESOURCE_NAMES := {
@@ -69,6 +74,7 @@ const TERRAIN_INCOME := {
 	Terrain.FOREST: {"gold": 12, "manpower": 6},
 	Terrain.COAST: {"gold": 20, "manpower": 2},
 	Terrain.MOUNTAINS: {"gold": 19, "manpower": 4},
+	Terrain.HIGHLANDS: {"gold": 14, "manpower": 5},
 }
 
 const CAPITAL_GOLD_BONUS := 8
@@ -82,6 +88,25 @@ const FACTION_RESOURCE_PER_TURN := 2
 ## strategic trade-off rather than a free upgrade.
 const FORTRESS_DEFENSE_BONUS := 0.25
 const FORTRESS_UPKEEP_GOLD := 4
+
+# --- Ambush ---------------------------------------------------------------
+
+## An ambush hides a garrison from enemy intelligence until an enemy army
+## enters the province. It is an order, not a passive terrain trait, and can
+## only be given in an important position (city, fortress or defensive ground).
+const AMBUSH_DEFENSE_MULTIPLIER := 1.5
+const AMBUSH_ATTACKER_LOSS_MULTIPLIER := 1.25
+const AMBUSH_TERRAINS := [Terrain.HIGHLANDS, Terrain.MOUNTAINS, Terrain.FOREST]
+
+## Reverse-engineered from the elevation field at generation time. Peaks are
+## the highest few mountain provinces: they become impassable and their graph
+## edges are removed. Highlands are the band just below them.
+const PEAK_PROVINCE_FRACTION := 0.07
+const PEAK_MAX_PROVINCES := 6
+const HIGHLANDS_PROVINCE_FRACTION := 0.12
+const HIGHLANDS_MAX_PROVINCES := 12
+const HIGHLANDS_MIN_ELEVATION := 0.62
+const HIGHLANDS_MIN_MOUNTAIN_FRACTION := 0.14
 
 ## Per-faction economy modifiers.
 ## gold/manpower: income multipliers. recruit_cost: multiplier on recruitment price.
@@ -212,6 +237,11 @@ static func terrain_name(terrain: int) -> String:
 
 static func terrain_defense(terrain: int) -> float:
 	return float(TERRAIN_DEFENSE.get(terrain, 1.0))
+
+
+## Whether this terrain offers enough cover to hide an army in ambush.
+static func can_ambush_terrain(terrain: int) -> bool:
+	return AMBUSH_TERRAINS.has(terrain)
 
 
 ## Combined terrain and fortress multiplier for a defending army.

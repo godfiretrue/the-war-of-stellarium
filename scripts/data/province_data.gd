@@ -14,6 +14,12 @@ extends Resource
 ## A fortress is a role on top of the terrain: it adds a flat defence bonus and
 ## costs gold every turn. Generated from the seed, never stored in a save.
 @export var is_fortress: bool = false
+## The highest mountain provinces are impassable: worldgen removes every edge
+## touching them, so no order can march into or out of a peak.
+@export var is_impassable: bool = false
+## True while this province's garrison lies in ambush. Hidden from enemy
+## intelligence until an enemy army enters or the order is cancelled.
+@export var ambush: bool = false
 @export var territory_type: String = "Wilderness"
 @export var capital_of: int = Balance.Faction.NEUTRAL
 @export var neighbors: PackedStringArray = PackedStringArray()
@@ -36,6 +42,19 @@ extends Resource
 
 func is_neutral() -> bool:
 	return owner_faction == Balance.Faction.NEUTRAL
+
+
+## Important positions can hide a garrison: cities, fortresses, and defensive
+## ground (Highlands, mountains and forests). Peaks are unreachable anyway.
+func is_ambush_ground() -> bool:
+	if is_impassable:
+		return false
+	return is_city or is_fortress or Balance.can_ambush_terrain(terrain)
+
+
+## An ambush needs troops to hide and a position worth hiding them in.
+func can_ambush() -> bool:
+	return not ambush and is_ambush_ground() and total_troops() > 0
 
 
 func is_owned_by(faction: int) -> bool:
