@@ -62,4 +62,5 @@ static func _ensure_cache() -> void:
 		unit.gold_cost = int(data.get("gold_cost", 0))
 		unit.manpower_cost = int(data.get("manpower_cost", 0))
 		unit.upkeep = int(data.get("upkeep", 0))
+		unit.role = String(data.get("role", ""))
 		_cache[unit_id] = unit

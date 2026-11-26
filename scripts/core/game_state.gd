@@ -22,6 +22,10 @@ var last_battle: Dictionary = {}
 ## penalty. Kept in the model so the HUD, bot and save all read one value.
 var capital_penalty: Dictionary = {}
 
+## faction -> consecutive resolution steps above DOMINATION_SHARE. The turn
+## manager reads this after each resolution; only the model owns the counter.
+var domination_streak: Dictionary = {}
+
 ## faction -> {province_id: true}. Terrain the faction has ever seen; it stays
 ## drawn after the army moves on, but live troop counts only come from the
 ## current visibility set below.
@@ -139,6 +143,7 @@ func start_new_game_from_map(state: MapState) -> void:
 	queued_orders.clear()
 	capital_penalty.clear()
 	explored.clear()
+	domination_streak.clear()
 
 	for faction: int in factions():
 		gold[faction] = Balance.STARTING_GOLD
@@ -146,6 +151,7 @@ func start_new_game_from_map(state: MapState) -> void:
 		faction_resources[faction] = {"aether": 0, "iron": 0}
 		queued_orders[faction] = []
 		explored[faction] = {}
+		domination_streak[faction] = 0
 
 	update_all_visibility()
 	state_changed.emit()
@@ -299,6 +305,39 @@ func advance_turn_state() -> void:
 	regen_home_guards()
 	decay_capital_penalties()
 	decay_conquest_unrest()
+	advance_domination_tracking()
+
+
+## Called once per resolution step, after the board has settled. A faction that
+## holds DOMINATION_SHARE of passable land extends its streak; everyone else
+## starts again at zero. Keeping the counter here makes the HUD, bot and save
+## read the same value.
+func advance_domination_tracking() -> void:
+	if map_state == null:
+		return
+	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
+		var held := map_state.domination_share(faction)
+		if held >= Balance.DOMINATION_SHARE:
+			domination_streak[faction] = int(domination_streak.get(faction, 0)) + 1
+		else:
+			domination_streak[faction] = 0
+
+
+func domination_progress(faction: int) -> Dictionary:
+	return {
+		"share": 0.0 if map_state == null else map_state.domination_share(faction),
+		"streak": int(domination_streak.get(faction, 0)),
+		"required": Balance.DOMINATION_STREAK,
+	}
+
+
+## The faction that has held the threshold long enough, or NEUTRAL. Impossible
+## for both sides at once because the threshold is above half the map.
+func domination_winner() -> int:
+	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
+		if int(domination_streak.get(faction, 0)) >= Balance.DOMINATION_STREAK:
+			return faction
+	return Balance.Faction.NEUTRAL
 
 
 ## Every owned province raises HOME_GUARD_REGEN militia up to its cap. The levy
@@ -1141,8 +1180,8 @@ func _field_winner(
 	if first_troops != second_troops:
 		return first_faction if first_troops > second_troops else second_faction
 
-	var first_power := CombatResolver.attack_power_of(first_units)
-	var second_power := CombatResolver.attack_power_of(second_units)
+	var first_power := CombatResolver.attack_power_of(first_units, second_units)
+	var second_power := CombatResolver.attack_power_of(second_units, first_units)
 	if not is_equal_approx(first_power, second_power):
 		return first_faction if first_power > second_power else second_faction
 	return first_faction if rng.randf() < 0.5 else second_faction

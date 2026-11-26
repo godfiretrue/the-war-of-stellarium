@@ -196,8 +196,14 @@ func _check_game_over() -> bool:
 		winner = BOT_FACTION
 	elif game.map_state.is_eliminated(BOT_FACTION):
 		winner = PLAYER_FACTION
-	elif game.map_state.winning_faction() != Balance.Faction.NEUTRAL:
-		winner = game.map_state.winning_faction()
+	else:
+		# Total control still wins outright; otherwise the domination streak
+		# tracked by GameState decides after three consecutive resolutions.
+		var all_owner := game.map_state.winning_faction()
+		if all_owner != Balance.Faction.NEUTRAL:
+			winner = all_owner
+		else:
+			winner = game.domination_winner()
 
 	if winner == Balance.Faction.NEUTRAL:
 		return false

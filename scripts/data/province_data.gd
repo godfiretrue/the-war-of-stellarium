@@ -106,9 +106,10 @@ func base_income() -> Dictionary:
 	return income
 
 
-## Defensive strength of the garrison and the militia, including the terrain
-## and fortress multipliers.
-func defense_power() -> float:
+## Defensive strength of the garrison and the militia before any terrain,
+## fortress or siege modifier. Combat uses this so both sides go through the
+## same multiplier path.
+func raw_defense_power() -> float:
 	var power := 0.0
 	for unit_id: String in garrison.keys():
 		var count := int(garrison[unit_id])
@@ -119,7 +120,13 @@ func defense_power() -> float:
 			power += float(unit.defense) * float(count)
 	if Balance.HOME_GUARD_ENABLED:
 		power += float(maxi(home_guard, 0)) * Balance.HOME_GUARD_DEFENSE
-	return power * Balance.defense_multiplier(terrain, is_fortress)
+	return power
+
+
+## Defensive strength of the garrison and the militia, including the terrain
+## and fortress multipliers.
+func defense_power() -> float:
+	return raw_defense_power() * Balance.defense_multiplier(terrain, is_fortress)
 
 
 func add_units(unit_id: String, count: int) -> void:

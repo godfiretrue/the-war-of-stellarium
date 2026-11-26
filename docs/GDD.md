@@ -12,10 +12,10 @@ O enredo completo — incluindo a Árvore da Vida corrompida, o Apocalipse dinâ
 |---|---|
 | Género e câmara | Estratégia 2D por turnos; mapa fixo 1152×648 |
 | Público | Jogadores de estratégia que gostam de decisões de campanha e simulação; 12+ `[ASSUMPTION]` |
-| Plataformas e input | PC desktop, teclado e rato; gamepad é trabalho por fazer |
-| Sessão | Uma campanha até vitória total; ~76 turnos na configuração medida |
+| Plataformas e input | PC desktop, teclado, rato e gamepad (navegação por foco no HUD) |
+| Sessão | Uma campanha até conquista total ou domínio sustentado; duração medida pelo `balance_sim.gd` |
 | Motor | Godot 4.7.2-stable, GDScript, LimboAI v1.8.1 |
-| Âmbito | MVP PAP concluído; Fase 1.5 em curso; Fase 2 fora do âmbito |
+| Âmbito | MVP PAP e Fase 1.5 concluídos; Fase 2 fora do âmbito |
 | Referências | *Conquest of Elysium 5* (mundo dinâmico, lore emergente); *Total War: Warhammer 3* (comando de exércitos, geopolítica de fantasia) |
 
 ## Pilares
@@ -41,24 +41,24 @@ Explorar províncias neutras → ganhar ouro, manpower e recurso de facção →
 | Feature | Status | Scope | Summary | Docs |
 |---|---|---|---|---|
 | Resolução de turnos e ordens | implemented | MVP | Fases simultâneas, fila de ordens validada, resolução por snapshot | [design](features/turn-resolution/design.md) |
-| Combate e unidades | implemented | MVP | Fórmula numérica, terreno, milícia, quatro tipos de unidade | [design](features/combat-and-units/design.md) |
+| Combate e unidades | implemented | MVP + Fase 1.5 | Fórmula numérica, terreno, milícia, 12 tipos de unidade com papéis, contra-ataques e cerco | [design](features/combat-and-units/design.md) |
 | Mapa e províncias | implemented | MVP + Fase 1.5 | 21 províncias, cinco terrenos (com Terras Altas), fortalezas, picos intransponíveis | [design](features/map-and-provinces/design.md) |
 | Névoa de guerra e emboscadas | implemented | Fase 1.5 | Visão de próprias + vizinhas, memória de terreno, guarnição escondida que embosca | [design](features/fog-and-ambush/design.md) |
 | Bot e árvore de comportamento | implemented | MVP | LimboAI orquestra decisões em `BotController` | [arquitetura](ARCHITECTURE.md) |
 | HUD de campanha | implemented | MVP | Recursos, ordens, dock de província, relatório de batalha | [arquitetura](ARCHITECTURE.md) |
-| Save e localização | implemented | MVP | JSON atómico versão 4, textos PT/EN via `Loc` | [arquitetura](ARCHITECTURE.md) |
-| Tipos de unidade e cerco | idea | Fase 1.5 | Vantagens mútuas entre arquétipos e unidades de cerco | — |
-| Menu de previsão de batalha | idea | Fase 1.5 | Rácio de poder, baixas estimadas, modificadores visíveis | — |
-| Personalidade da IA por facção | idea | Fase 1.5 | Doutrina agressiva/tecnológica dos Elfos vs resiliência dos Humanos | — |
-| Vitória dinâmica e meio de jogo | idea | Fase 1.5 | Objetivos além da conquista total | — |
-| Navegação por gamepad | idea | Fase 1.5 | Vizinhos de foco e atalhos preservados | — |
+| Save e localização | implemented | MVP + Fase 1.5 | JSON atómico versão 8, textos PT/EN via `Loc` | [arquitetura](ARCHITECTURE.md) |
+| Tipos de unidade e cerco | implemented | Fase 1.5 | Seis unidades por facção, ciclo de contra-ataques e cerco a fortalezas/Terras Altas | [design](features/combat-and-units/design.md) |
+| Menu de previsão de batalha | implemented | Fase 1.5 | Rácio de poder, baixas estimadas e intervalo, com névoa respeitada | [design](features/combat-and-units/design.md#previsão-de-batalha) |
+| Personalidade da IA por facção | implemented | Fase 1.5 | Doutrina por facção: Humanos preferem cavalaria e emboscam uma vez; Elfos leem terreno fortificado, preferem tropas à distância e emboscam com mais frequência | [arquitetura](ARCHITECTURE.md) |
+| Vitória dinâmica e meio de jogo | implemented | Fase 1.5 | 70% das províncias transitáveis por três resoluções seguidas, com progresso no HUD | [design](features/dynamic-victory/design.md) |
+| Navegação por gamepad | implemented | Fase 1.5 | Vizinhos de foco em loop e atalhos ativos com botão focado | [arquitetura](ARCHITECTURE.md) |
 | Segunda camada de economia | idea | Fase 2 | Edifícios, distritos, manutenção e conversão de recursos | — |
 | Visão de Fase 2 | idea | Fase 2 | Batalhas em tempo real, heróis, moral, diplomacia, leis, Apocalipse, Ratos | [lore](LORE.md) |
 
 ## Marcos
 
-1. **M1, MVP jogável:** mapa, turnos simultâneos, combate, bot, HUD, save e PT/EN · pronto quando Novo Jogo e Continuar arrancam e `balance_sim.gd` corre 20 seeds sem falhas de fila.
-2. **M1.5, aprofundamento tático:** unidades de cerco, previsão de batalha, personalidade por facção e vitória dinâmica · pronto quando cada item estiver jogável e o simulador voltar a medir a divisão de vitórias.
+1. **M1, MVP jogável:** mapa, turnos simultâneos, combate, bot, HUD, save e PT/EN · pronto quando Novo Jogo e Continuar arrancam e `balance_sim.gd` corre 60 seeds sem falhas de fila.
+2. **M1.5, aprofundamento tático:** unidades de cerco, previsão de batalha, personalidade por facção e vitória dinâmica · concluído: cada item está jogável e o simulador voltou a medir a divisão de vitórias em 60 sementes.
 
 ## Decisions
 
@@ -71,7 +71,7 @@ Explorar províncias neutras → ganhar ouro, manpower e recurso de facção →
 ## Open questions
 
 - **Suposições a confirmar:** plataforma apenas PC, público 12+, idioma da documentação, sessão de ~76 turnos.
-- **Riscos:** o lore afirma 55% Humanos / 45% Elfos; com Terras Altas, picos intransponíveis e névoa, o simulador mede 65% / 35% em 20 seeds (`41000..41019`), todos terminados. A Fase 2 tenta expandir o escopo além da PAP.
+- **Riscos:** o lore afirma 55% Humanos / 45% Elfos; em 60 seeds (`41000..41059`, mundo 2×) o simulador mede 52% / 48% depois do rosário de 12 unidades, todos terminados, sem falhas de fila. A janela antiga de 20 seeds dava outro resultado, pelo que alterações de regras são comparadas sempre com a base de 60 jogos. A Fase 2 tenta expandir o escopo além da PAP.
 
 ## Change log
 

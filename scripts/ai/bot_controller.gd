@@ -21,6 +21,18 @@ extends Node
 @export var bot_faction: int = Balance.Faction.ELVES
 @export var auto_play: bool = true
 
+var _doctrine: FactionDoctrine
+var _doctrine_faction: int = Balance.Faction.NEUTRAL
+
+
+## Fixed personality for this faction, cached until bot_faction changes.
+func doctrine() -> FactionDoctrine:
+	if _doctrine == null or _doctrine_faction != bot_faction:
+		_doctrine = FactionDoctrine.for_faction(bot_faction)
+		_doctrine_faction = bot_faction
+	return _doctrine
+
+
 const BASE_RECRUITS_PER_TURN := 3
 const MAX_RECRUITS_PER_TURN := 18
 const BASE_BATTLES_PER_TURN := 6
@@ -170,7 +182,7 @@ func recruit_phase() -> void:
 func ambush_phase() -> void:
 	if game == null or game.map_state == null or stalemate_rounds < 1:
 		return
-	var cap := 1 if stalemate_rounds < IMPATIENCE_ROUNDS else 2
+	var cap: int = doctrine().ambush_cap if stalemate_rounds < IMPATIENCE_ROUNDS else doctrine().ambush_cap + 1
 	var placed := 0
 	for province in game.map_state.provinces_owned_by(bot_faction):
 		if placed >= cap:
@@ -303,8 +315,12 @@ func _affordable_unit(unit_ids: Array) -> String:
 		var costs := game.recruit_costs(bot_faction, unit_id)
 		if not game.can_afford(bot_faction, int(costs["gold"]), int(costs["manpower"])):
 			continue
-		if unit.gold_cost > best_cost:
-			best_cost = unit.gold_cost
+		var tied: bool = absf(float(unit.gold_cost) - float(best_cost)) <= doctrine().recruit_tie_break_gold
+		if unit.gold_cost > best_cost or (
+			tied and not doctrine().recruit_role_bias.is_empty()
+			and unit.role == doctrine().recruit_role_bias
+		):
+			best_cost = maxi(best_cost, unit.gold_cost)
 			choice = unit_id
 	return choice
 
@@ -343,7 +359,7 @@ func _execute_attacks(ignore_odds: bool) -> int:
 			continue
 		# An attack keeps a token guard at home, but a stalled front goes all in:
 		# withholding troops during a stalemate produced wars that never ended.
-		var reserve := 0 if ignore_odds else Balance.GARRISON_INTERIOR
+		var reserve: int = 0 if ignore_odds else Balance.GARRISON_INTERIOR + doctrine().attack_reserve_delta
 		var sending := _withhold(province.garrison.duplicate(), reserve)
 		if CombatResolver.troop_count(sending) <= 0:
 			continue
@@ -374,7 +390,10 @@ func best_attack_target(
 			continue
 		var defense := maxf(game.visible_defense_power(bot_faction, target), 1.0)
 		var ratio := attack / defense
-		if not ignore_odds and ratio < ATTACK_SAFETY_MARGIN:
+		var margin: float = doctrine().attack_margin
+		if target.is_fortress or target.terrain == Balance.Terrain.HIGHLANDS:
+			margin += doctrine().fortress_margin_bonus
+		if not ignore_odds and ratio < margin:
 			continue
 		if ratio > best_ratio:
 			best_ratio = ratio

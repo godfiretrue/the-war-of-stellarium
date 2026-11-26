@@ -60,6 +60,14 @@ const STRINGS := {
 		"unit_human_crossbowmen": "Besteiros",
 		"unit_elf_boar": "Javali Mecânico",
 		"unit_elf_riflemen": "Mosqueteiros",
+		"unit_human_knights": "Cavaleiros",
+		"unit_human_pikemen": "Piqueiros",
+		"unit_human_ironclad": "Couraçado",
+		"unit_human_catapult": "Catapulta Arcana",
+		"unit_elf_grove_wardens": "Guardas do Bosque",
+		"unit_elf_thorn_lancers": "Lanceiros Espinhosos",
+		"unit_elf_iron_guard": "Guarda de Ferro",
+		"unit_elf_howitzer": "Obus Móvel",
 
 		# --- HUD: selection ---------------------------------------------
 		"select_province": "Selecione uma província no mapa",
@@ -74,6 +82,8 @@ const STRINGS := {
 		"income": "+%d %s",
 		"recruit": "+ %s (%d🪙 %d👥)",
 		"recruit_short": "+ %s",
+		"recruit_page": "%d/%d",
+		"tip_recruit_page": "Clica para ver outro par de unidades.",
 		"recruit_cost": "Custo: %d ouro · %d mão-de-obra",
 		"recruit_city_only": "Só em cidades e castelos",
 		"recruit_unrest": "Província em revolta (%d turnos)",
@@ -151,6 +161,17 @@ const STRINGS := {
 		"battle_swap_line": "Troca de posições: %s ↔ %s",
 		"battles_title": "Batalhas do turno (%d)",
 
+		# --- Battle preview ---------------------------------------------
+		"preview_title": "Previsão — %s",
+		"preview_free": "Sem defesa: captura garantida.",
+		"preview_low_intel": "Sem informação sobre a guarnição inimiga.",
+		"preview_power": "Poder: %.0f contra %.0f (ataque %.0f%%)",
+		"preview_losses": "Baixas previstas: %d tuas · %d inimigas",
+		"preview_band": "Intervalo: %d–%d tuas baixas · %s",
+		"preview_capture": "captura provável",
+		"preview_hold": "defesa mantém-se",
+		"preview_note": "O resultado final varia com a sorte.",
+
 		# --- Main menu --------------------------------------------------
 		"new_game": "Novo jogo",
 		"continue": "Continuar",
@@ -161,10 +182,14 @@ const STRINGS := {
 		"world_failed": "Não foi possível gerar o mundo.",
 		"loading_world": "A gerar o continente",
 
+		# --- Domination -------------------------------------------------
+		"domination_progress": "Domínio %d%% · %d/%d",
+		"tip_domination": "Território possuído e turnos seguidos acima de 70%.",
+
 		# --- Game over --------------------------------------------------
 		"victory": "Vitória",
 		"defeat": "Derrota",
-		"victory_body": "%s controla Stellarium.",
+		"victory_body": "%s venceu a guerra por Stellarium.",
 
 		# --- Settings panel --------------------------------------------
 		"settings_title": "Definições",
@@ -229,6 +254,14 @@ const STRINGS := {
 		"unit_human_crossbowmen": "Crossbowmen",
 		"unit_elf_boar": "Mechanical Boar",
 		"unit_elf_riflemen": "Riflemen",
+		"unit_human_knights": "Knights",
+		"unit_human_pikemen": "Pikemen",
+		"unit_human_ironclad": "Ironclad",
+		"unit_human_catapult": "Arcane Catapult",
+		"unit_elf_grove_wardens": "Grove Wardens",
+		"unit_elf_thorn_lancers": "Thorn Lancers",
+		"unit_elf_iron_guard": "Iron Guard",
+		"unit_elf_howitzer": "Mobile Howitzer",
 
 		# --- HUD: selection ---------------------------------------------
 		"select_province": "Select a province on the map",
@@ -320,6 +353,17 @@ const STRINGS := {
 		"battle_swap_line": "Swap of positions: %s ↔ %s",
 		"battles_title": "Battles this turn (%d)",
 
+		# --- Battle preview ---------------------------------------------
+		"preview_title": "Forecast — %s",
+		"preview_free": "Undefended: capture guaranteed.",
+		"preview_low_intel": "No intelligence on the enemy garrison.",
+		"preview_power": "Power: %.0f vs %.0f (attack %.0f%%)",
+		"preview_losses": "Expected losses: %d yours · %d enemy",
+		"preview_band": "Range: %d–%d your losses · %s",
+		"preview_capture": "likely capture",
+		"preview_hold": "defence holds",
+		"preview_note": "The final result varies with the roll.",
+
 		# --- Main menu --------------------------------------------------
 		"new_game": "New Game",
 		"continue": "Continue",
@@ -330,10 +374,14 @@ const STRINGS := {
 		"world_failed": "Could not generate the world.",
 		"loading_world": "Generating the continent",
 
+		# --- Domination -------------------------------------------------
+		"domination_progress": "Domination %d%% · %d/%d",
+		"tip_domination": "Land held and consecutive turns above 70%.",
+
 		# --- Game over --------------------------------------------------
 		"victory": "Victory",
 		"defeat": "Defeat",
-		"victory_body": "%s control Stellarium.",
+		"victory_body": "%s won the war for Stellarium.",
 
 		# --- Settings panel --------------------------------------------
 		"settings_title": "Settings",

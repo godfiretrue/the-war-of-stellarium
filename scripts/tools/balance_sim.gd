@@ -8,7 +8,7 @@ extends SceneTree
 ## GameState/TurnManager resolution path, so the numbers describe the shipped
 ## rules. Autosave is disabled so the player's save file is never touched.
 
-const GAMES := 20
+const GAMES := 60
 const BASE_SEED := 41000
 const MAX_TURNS := 400
 ## Balance is measured on the shipping world size.
@@ -28,6 +28,7 @@ var _wins := {
 var _unfinished := 0
 var _queue_failures := 0
 var _errors: PackedStringArray = PackedStringArray()
+var games_played: int = GAMES
 
 
 func _initialize() -> void:
@@ -37,6 +38,16 @@ func _initialize() -> void:
 
 
 func _run_all() -> void:
+	# Optional quick probe: pass a game count after `--` to override the default
+	# 60-seed gate, e.g. `godot ... --script res://scripts/tools/balance_sim.gd -- 20`.
+	var games := GAMES
+	var args := OS.get_cmdline_user_args()
+	if not args.is_empty():
+		var requested := int(args[0])
+		if requested > 0:
+			games = requested
+	games_played = games
+
 	game = root.get_node_or_null("Game") as GameState
 	if game == null:
 		game = GameState.new()
@@ -56,10 +67,10 @@ func _run_all() -> void:
 	turn_manager.autosave = false
 
 	print("[sim] %d games at %.1fx, seeds %d..%d, max %d turns" % [
-		GAMES, WORLD_SCALE, BASE_SEED, BASE_SEED + GAMES - 1, MAX_TURNS,
+		games, WORLD_SCALE, BASE_SEED, BASE_SEED + games - 1, MAX_TURNS,
 	])
 
-	for index in GAMES:
+	for index in games:
 		_run_game(BASE_SEED + index)
 
 	_report()
@@ -127,7 +138,10 @@ func _winner() -> int:
 	if game.map_state.is_eliminated(Balance.Faction.ELVES):
 		return Balance.Faction.HUMANS
 	var leading := game.map_state.winning_faction()
-	return leading
+	if leading != Balance.Faction.NEUTRAL:
+		return leading
+	# A domination-streak victory ends the game without owning every province.
+	return game.domination_winner()
 
 
 func _report() -> void:
@@ -138,11 +152,11 @@ func _report() -> void:
 	var average := float(total) / float(maxi(finished, 1))
 
 	print("")
-	print("[sim] results over %d games" % GAMES)
+	print("[sim] results over %d games" % games_played)
 	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES, Balance.Faction.NEUTRAL]:
 		var wins := int(_wins[faction])
 		print("[sim] %s: %d wins (%.0f%%)" % [
-			Balance.faction_name(faction), wins, 100.0 * float(wins) / float(GAMES),
+			Balance.faction_name(faction), wins, 100.0 * float(wins) / float(games_played),
 		])
 	print("[sim] finished %d, unfinished %d, average %.1f turns" % [
 		finished, _unfinished, average,

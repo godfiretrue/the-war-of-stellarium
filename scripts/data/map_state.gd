@@ -121,6 +121,14 @@ func is_eliminated(faction: int) -> bool:
 	return controlled_province_count(faction) == 0
 
 
+## Share of all passable provinces held by a faction, in 0.0–1.0.
+func domination_share(faction: int) -> float:
+	var target := passable_province_count()
+	if target <= 0:
+		return 0.0
+	return float(controlled_province_count(faction)) / float(target)
+
+
 ## Returns the faction that owns every province, or NEUTRAL when the game is
 ## still running.
 func winning_faction() -> int:

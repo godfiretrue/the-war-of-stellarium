@@ -164,6 +164,14 @@ theme_override_colors/font_color = Color(0.7882353, 0.6509804, 0.9098039, 1)
 theme_override_font_sizes/font_size = 13
 text = "0"
 
+[node name="Domination" type="Label" parent="Root/TopBar/TopMargin/TopRow"]
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.62, 0.66, 0.78, 1)
+theme_override_font_sizes/font_size = 11
+text = "Domínio 0% · 0/3"
+
 [node name="TurnBadge" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
 layout_mode = 2
 size_flags_vertical = 4
@@ -280,6 +288,64 @@ horizontal_scroll_mode = 0
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
+
+[node name="PreviewCard" type="PanelContainer" parent="Root"]
+visible = false
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -155.0
+offset_top = -320.0
+offset_right = 155.0
+offset_bottom = -196.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="PreviewBox" type="VBoxContainer" parent="Root/PreviewCard"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 1
+
+[node name="PreviewTitle" type="Label" parent="Root/PreviewCard/PreviewBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.98, 0.83, 0.45, 1)
+theme_override_font_sizes/font_size = 13
+text = ""
+autowrap_mode = 2
+
+[node name="PreviewPower" type="Label" parent="Root/PreviewCard/PreviewBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_font_sizes/font_size = 11
+text = ""
+autowrap_mode = 2
+
+[node name="PreviewLosses" type="Label" parent="Root/PreviewCard/PreviewBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_font_sizes/font_size = 11
+text = ""
+autowrap_mode = 2
+
+[node name="PreviewBand" type="Label" parent="Root/PreviewCard/PreviewBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.62, 0.66, 0.76, 1)
+theme_override_font_sizes/font_size = 11
+text = ""
+autowrap_mode = 2
+
+[node name="PreviewNote" type="Label" parent="Root/PreviewCard/PreviewBox"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.62, 0.66, 0.76, 1)
+theme_override_font_sizes/font_size = 11
+text = ""
+autowrap_mode = 2
 
 [node name="Toast" type="PanelContainer" parent="Root"]
 visible = false
@@ -424,17 +490,24 @@ mouse_filter = 2
 theme_override_constants/separation = 6
 
 [node name="RecruitA" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/RecruitRow"]
-custom_minimum_size = Vector2(100, 30)
+custom_minimum_size = Vector2(84, 30)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Recrutar"
 clip_text = true
 
 [node name="RecruitB" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/RecruitRow"]
-custom_minimum_size = Vector2(100, 30)
+custom_minimum_size = Vector2(84, 30)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Recrutar"
+clip_text = true
+
+[node name="RecruitPage" type="Button" parent="Root/BottomPanel/PanelRow/ActionsBox/RecruitRow"]
+custom_minimum_size = Vector2(34, 30)
+layout_mode = 2
+size_flags_horizontal = 0
+text = "1/3"
 clip_text = true
 
 [node name="ActionRow" type="HBoxContainer" parent="Root/BottomPanel/PanelRow/ActionsBox"]

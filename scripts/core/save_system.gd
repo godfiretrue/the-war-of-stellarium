@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 7
+const VERSION := 8
 
 
 static func has_save() -> bool:
@@ -117,6 +117,15 @@ static func _migrate(raw: Dictionary) -> Dictionary:
 	# worlds. The province ids stay valid because worldgen is unchanged at 1x.
 	if version == 5:
 		raw["world_scale"] = 1.0
+		version = 7
+	# Version 7 predates dynamic victory; its saves need a zeroed streak for
+	# every faction so a continued campaign starts the counter from scratch.
+	if version == 7:
+		var factions: Dictionary = raw.get("factions", {})
+		for key in factions.keys():
+			var entry: Dictionary = factions[key]
+			entry["domination_streak"] = 0
+			factions[key] = entry
 		raw["version"] = VERSION
 		return raw
 	# Version 6 predates Highlands, impassable peaks and fog of war. Worldgen
@@ -136,6 +145,7 @@ static func _serialize_factions(game: GameState) -> Dictionary:
 			"manpower": game.get_manpower(faction),
 			"resources": game.faction_resources.get(faction, {}).duplicate(),
 			"capital_penalty": int(game.capital_penalty.get(faction, 0)),
+			"domination_streak": int(game.domination_streak.get(faction, 0)),
 			"explored": seen.keys(),
 		}
 	return factions
@@ -162,6 +172,7 @@ static func _apply_factions(game: GameState, factions: Dictionary) -> void:
 		game.gold[faction] = int(entry.get("gold", 0))
 		game.manpower[faction] = int(entry.get("manpower", 0))
 		game.capital_penalty[faction] = int(entry.get("capital_penalty", 0))
+		game.domination_streak[faction] = int(entry.get("domination_streak", 0))
 
 		var stock := {"aether": 0, "iron": 0}
 		var saved_resources: Dictionary = entry.get("resources", {})

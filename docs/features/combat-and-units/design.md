@@ -1,6 +1,6 @@
 # Combate e unidades
 
-**Status:** implemented · **Updated:** 2026-11-21 · [GDD](../../GDD.md)
+**Status:** implemented · **Updated:** 2026-11-25 · [GDD](../../GDD.md)
 
 O combate é numérico: o jogador escolhe que tropas destacar e o resultado depende do efetivo, do tipo de unidade, do terreno e da milícia defensora. Isto serve o pilar "O terreno decide" — atacar uma montanha fortificada sem cerco é caro.
 
@@ -27,22 +27,34 @@ O combate é numérico: o jogador escolhe que tropas destacar e o resultado depe
 | Fator de baixas atacante / defensor | 0,7 / 1,0 | × | `ATTACKER_LOSS_FACTOR` / `DEFENDER_LOSS_FACTOR` |
 | Bónus defensivo da emboscada | 1,5 | × | `AMBUSH_DEFENSE_MULTIPLIER` |
 | Bónus de baixas ao atacante emboscado | 1,25 | × | `AMBUSH_ATTACKER_LOSS_MULTIPLIER` |
-| Espadachins humanos | 5 atk / 5 def | 24 ouro, 5 manpower, 2 manutenção | `human_swordsmen` |
-| Besteiros humanos | 7 atk / 3 def | 30 ouro, 6 manpower, 3 manutenção | `human_crossbowmen` |
-| Javali mecânico élfico | 6 atk / 7 def | 30 ouro, 6 manpower, 3 manutenção | `elf_boar` |
-| Fuzileiros élficos | 8 atk / 4 def | 36 ouro, 8 manpower, 4 manutenção | `elf_riflemen` |
+| Espadachins humanos (infantaria) | 5 atk / 5 def | 24 ouro, 5 manpower, 2 manutenção | `human_swordsmen` |
+| Besteiros humanos (arco) | 7 atk / 3 def | 30 ouro, 6 manpower, 3 manutenção | `human_crossbowmen` |
+| Cavaleiros humanos (cavalaria) | 8 atk / 6 def | 34 ouro, 7 manpower, 4 manutenção | `human_knights` |
+| Piqueiros humanos (anti-cavalaria) | 5 atk / 8 def | 30 ouro, 6 manpower, 3 manutenção | `human_pikemen` |
+| Couraçado humano (armadura) | 8 atk / 9 def | 36 ouro, 9 manpower, 4 manutenção | `human_ironclad` |
+| Catapulta arcana humana (cerco) | 9 atk / 3 def | 36 ouro, 8 manpower, 4 manutenção | `human_catapult` |
+| Guardas do Bosque élficos (infantaria) | 5 atk / 6 def | 24 ouro, 5 manpower, 2 manutenção | `elf_grove_wardens` |
+| Javali mecânico élfico (cavalaria) | 6 atk / 7 def | 30 ouro, 6 manpower, 3 manutenção | `elf_boar` |
+| Lanceiros Espinhosos élficos (anti-cavalaria) | 6 atk / 8 def | 36 ouro, 7 manpower, 4 manutenção | `elf_thorn_lancers` |
+| Fuzileiros élficos (arco) | 8 atk / 4 def | 36 ouro, 8 manpower, 4 manutenção | `elf_riflemen` |
+| Guarda de Ferro élfica (armadura) | 7 atk / 9 def | 36 ouro, 9 manpower, 4 manutenção | `elf_iron_guard` |
+| Obus Móvel élfico (cerco) | 9 atk / 3 def | 36 ouro, 8 manpower, 4 manutenção | `elf_howitzer` |
+| Bónus de contra-ataque por função | +25% no ciclo infantaria → cerco → armadura → cavalaria → arco → infantaria; +30% anti-cavalaria contra cavalaria | Proporção da guarnição inimiga com a função contra-atacada | `COUNTER_BONUS`, `ANTI_CAVALRY_BONUS`, `COUNTERS` |
+| Cerco | Reduz o bónus de fortaleza (+0,25) até 0,15 conforme a proporção de tropas de cerco; +25% de ataque em fortalezas e Highlands | `role: siege` | `SIEGE_FORTRESS_REDUCTION`, `SIEGE_ATTACK_BONUS` |
 | Divisor / expoente de manutenção | 15 / 1,2 | — | `UPKEEP_COST_DIVISOR` / `UPKEEP_EXPONENT` |
+
+## Previsão de batalha
+
+Durante o modo marcha, passar o rato sobre uma província vizinha mostra uma previsão antes de confirmar a ordem. `CombatResolver.predict()` é puro: não tira números aleatórios e não altera a província. Calcula três pontos com a mesma fórmula do combate: `expected` (ambos os fatores 1,0), `best` (ataque 1,1 / defesa 0,9) e `worst` (ataque 0,9 / defesa 1,1). O painel mostra poder, baixas esperadas, o intervalo entre os dois extremos e se a captura é provável. Como as baixas usam `ceil`, os extremos podem trocar de ordem; a interface usa sempre o menor e o maior valor.
+
+A previsão respeita a névoa: se a guarnição defensora não estiver visível para o jogador, o painel mostra apenas "sem informação" em vez de revelar o efetivo através do cálculo. O painel não envia ordens nem bloqueia cliques no mapa.
 
 ## Edge cases
 
 - Exército atacante vazio não gera batalha.
 - Duas facções que chegam à mesma província sem defesa, ou que trocam províncias, lutam numa província temporária de planície.
-- As unidades de cerco do lore (catapulta arcana, obus móvel) são `idea`: hoje não existem, e fortalezas apenas somam +0,25 à defesa.
-
-## Open questions
-
-- [ASSUMPTION] Manter os quatro tipos de unidade atuais até o cartão de cerco ser implementado.
 
 ## History
 
 - 2026-11-21: documentado a partir de `balance.gd` e `combat_resolver.gd`.
+- 2026-11-25: rosário alargado para 12 unidades (6 por facção), com funções, ciclo de contra-ataques, cerco e paginação no HUD; previsão de batalha acrescentada.

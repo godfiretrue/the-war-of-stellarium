@@ -13,6 +13,8 @@ extends Resource
 @export var gold_cost: int = 0
 @export var manpower_cost: int = 0
 @export var upkeep: int = 0
+## Combat role: infantry, ranged, cavalry, anti_cavalry, armour or siege.
+@export var role: String = ""
 
 
 ## Recruitment price after the recruiter's faction modifier.

@@ -23,14 +23,14 @@ Para assegurar a viabilidade técnica e o cumprimento rigoroso dos prazos da PAP
   4. **IA com Behaviour Trees (LimboAI v1.8.1):** Bot orientado a tarefas com sequência de recrutamento, ataque e avanço territorial.
   5. **HUD de Campanha Total War:** Barra superior com recursos e tooltips dinâmicos, dock inferior de província, gaveta retrátil de ordens com setas vetoriais no mapa e relatório pós-batalha com foco de câmara.
   6. **Persistência & Localização:** Save/Load atómico em JSON (com auto-save) e suporte bilingue instantâneo (PT/EN) em runtime.
-  7. **Calibração Headless:** Ferramenta de simulação automática (`balance_sim.gd`) com taxa de vitória simétrica (~55% Humanos / 45% Elfos).
+  7. **Calibração Headless:** Ferramenta de simulação automática (`balance_sim.gd`) com 60 sementes fixas e nenhuma facção acima de ~55% de vitórias.
 
-* **Fase 1.5: Aprofundamento Tático Imediato (Sprint em Curso):**
+* **Fase 1.5: Aprofundamento Tático Imediato (Concluído):**
   1. **Tipos de Província & Terrenos Diversificados:** Províncias com vantagens táticas e rendimentos diferenciados (montanhas defensivas, portos fluviais/costeiros ricos em ouro, planícies agrícolas com elevado manpower, florestas e fortalezas).
   2. **Roster Militar Especializado & Cerco:** Inclusão de unidades de choque, longo alcance e unidades pesadas de **Cerco** (catapultas arcanas e obuses móveis) com bónus de assalto a cidades fortificadas.
   3. **Menu de Previsão de Batalha (Estilo Total War):** Painel de rácio de poder (*Power Ratio*), estimativa de baixas e visualização de modificadores de terreno antes da confirmação da ordem de ataque.
   4. **Personalidade de IA por Fação:** Especialização da árvore de decisão no LimboAI (doutrina militar agressiva e tecnológica dos Elfos vs resiliência e recrutamento rápido dos Humanos).
-  5. **Midgame & Condições de Vitória Dinâmicas:** Transição da simples conquista territorial cega (21 províncias) para objetivos estratégicos e corrida contra o Apocalipse.
+  5. **Midgame & Condições de Vitória Dinâmicas:** Manter 70% das províncias transitáveis por três resoluções consecutivas vence a guerra; a conquista total continua a vencer de imediato e a eliminação continua a ser derrota.
 
 * **Fase 2: Visão de Expansão (Backlog Pós-Aprofundamento):**
   - Batalhas táticas em tempo real numa grelha detalhada, heróis com magias ativas no campo, colapso de moral dinâmico e deserção, sistema diplomático com índice de credibilidade, decretos políticos e a 3ª fação (Ratos - Enxame Tóxico).

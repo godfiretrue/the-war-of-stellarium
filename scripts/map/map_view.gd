@@ -13,6 +13,9 @@ extends Node2D
 
 signal province_clicked(province_id: String)
 signal province_selected(province_id: String)
+## Emitted when the province under the pointer changes (empty id on leaving).
+## The HUD uses it to preview a march target before the click commits the order.
+signal province_hovered(province_id: String)
 
 const PROVINCE_SCENE := preload("res://scenes/map/province.tscn")
 const TERRAIN_SHADER := preload("res://shaders/terrain.gdshader")
@@ -547,6 +550,7 @@ func _update_hover(world_point: Vector2) -> void:
 		var view: ProvinceView = _views.get(province_id, null)
 		if view != null:
 			view.set_hovered(true)
+	province_hovered.emit(province_id)
 
 
 # --- Overlay -------------------------------------------------------------

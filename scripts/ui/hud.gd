@@ -27,6 +27,10 @@ var map_view: MapView
 
 var selected_province_id: String = ""
 var march_origin_id: String = ""
+## Last hovered march target, so changing the troop count refreshes the forecast.
+var preview_target_id: String = ""
+## The roster has more units than the two recruit buttons; this is the shown pair.
+var recruit_page: int = 0
 
 var _last_battles: Array = []
 var _game_over_winner := -2
@@ -50,6 +54,7 @@ var _pulse_hot := false
 @onready var _resource_chip: PanelContainer = $Root/TopBar/TopMargin/TopRow/ResourceChip
 @onready var _resource_icon: UiIcon = $Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox/ResourceIcon
 @onready var _resource: Label = $Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox/Resource
+@onready var _domination: Label = $Root/TopBar/TopMargin/TopRow/Domination
 @onready var _turn_badge: PanelContainer = $Root/TopBar/TopMargin/TopRow/TurnBadge
 @onready var _turn: Label = $Root/TopBar/TopMargin/TopRow/TurnBadge/Turn
 @onready var _menu_button: Button = $Root/TopBar/TopMargin/TopRow/MenuButton
@@ -65,6 +70,7 @@ var _pulse_hot := false
 @onready var _garrison_list: HBoxContainer = $Root/BottomPanel/PanelRow/GarrisonBox/GarrisonList
 @onready var _recruit_a: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitA
 @onready var _recruit_b: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitB
+@onready var _recruit_page: Button = $Root/BottomPanel/PanelRow/ActionsBox/RecruitRow/RecruitPage
 @onready var _march: Button = $Root/BottomPanel/PanelRow/ActionsBox/ActionRow/March
 @onready var _ambush: Button = $Root/BottomPanel/PanelRow/ActionsBox/ActionRow/Ambush
 @onready var _end_turn: Button = $Root/EndTurn
@@ -84,6 +90,12 @@ var _pulse_hot := false
 @onready var _march_panel: PanelContainer = $Root/MarchPanel
 @onready var _march_label: Label = $Root/MarchPanel/MarchBox/MarchLabel
 @onready var _march_count: SpinBox = $Root/MarchPanel/MarchBox/MarchCount
+@onready var _preview_card: PanelContainer = $Root/PreviewCard
+@onready var _preview_title: Label = $Root/PreviewCard/PreviewBox/PreviewTitle
+@onready var _preview_power: Label = $Root/PreviewCard/PreviewBox/PreviewPower
+@onready var _preview_losses: Label = $Root/PreviewCard/PreviewBox/PreviewLosses
+@onready var _preview_band: Label = $Root/PreviewCard/PreviewBox/PreviewBand
+@onready var _preview_note: Label = $Root/PreviewCard/PreviewBox/PreviewNote
 @onready var _settings_panel: SettingsPanel = $Root/SettingsPanel
 @onready var _settings: GameSettings = get_node("/root/Settings")
 
@@ -104,6 +116,7 @@ func _ready() -> void:
 
 	_battle_card.visible = false
 	_orders_card.visible = false
+	_preview_card.visible = false
 	_toast.visible = false
 	_orders_collapsed = true
 	_pulse_hot = false
@@ -129,9 +142,12 @@ func _connect_signals() -> void:
 	if map_view != null:
 		map_view.province_clicked.connect(_on_map_clicked)
 		map_view.province_selected.connect(_on_map_selection)
+		map_view.province_hovered.connect(_on_map_hover)
+	_march_count.value_changed.connect(_on_march_count_changed)
 
 	_recruit_a.pressed.connect(_on_recruit.bind(0))
 	_recruit_b.pressed.connect(_on_recruit.bind(1))
+	_recruit_page.pressed.connect(_on_recruit_page_pressed)
 	_march.pressed.connect(_on_march_pressed)
 	_ambush.pressed.connect(_on_ambush_pressed)
 	_end_turn.pressed.connect(_on_end_turn_pressed)
@@ -159,6 +175,7 @@ func _setup_focus_neighbors() -> void:
 		_march,            # bottom centre
 		_ambush,           # bottom centre, beside March
 		_recruit_b,
+		_recruit_page,     # cycles the recruit roster
 		_recruit_a,        # bottom left-centre
 		_orders_tab,       # left edge
 		_orders_collapse,  # orders card, left edge
@@ -213,6 +230,7 @@ func _style() -> void:
 	_orders_card.add_theme_stylebox_override("panel", UiStyle.hud_panel())
 	_battle_card.add_theme_stylebox_override("panel", UiStyle.hud_panel())
 	_march_panel.add_theme_stylebox_override("panel", UiStyle.hud_panel())
+	_preview_card.add_theme_stylebox_override("panel", UiStyle.hud_panel())
 
 	var toast_box := UiStyle.flat(Color(0.030, 0.038, 0.065, 0.97), UiStyle.GOLD_TRIM, 6)
 	toast_box.set_border_width_all(1)
@@ -308,6 +326,17 @@ func _refresh_economy() -> void:
 	var upkeep := game.upkeep_for(PLAYER)
 	var resources: Dictionary = income.get("resources", {})
 	var resource_income := int(resources.get(key, 0))
+
+	var progress := game.domination_progress(PLAYER)
+	var share := int(floor(float(progress["share"]) * 100.0))
+	var streak := int(progress["streak"])
+	_domination.text = Loc.t("domination_progress", [
+		share, streak, int(progress["required"]),
+	])
+	_domination.tooltip_text = Loc.t("tip_domination")
+	_domination.add_theme_color_override(
+		"font_color", UiStyle.GOLD if streak > 0 else UiStyle.TEXT_DIM
+	)
 
 	_gold_chip.tooltip_text = Loc.t("tip_gold", [
 		game.get_gold(PLAYER), int(income.get("gold", 0)), upkeep,
@@ -570,7 +599,12 @@ func _refresh_buttons() -> void:
 	var in_unrest := province != null and province.unrest_turns > 0
 	var can_recruit_base := player_planning and owned and is_city_province and not in_unrest
 
-	var unit_ids := UnitCatalog.units_for_faction(PLAYER)
+	var all_ids := UnitCatalog.units_for_faction(PLAYER)
+	var page_count := maxi(ceili(float(all_ids.size()) / 2.0), 1)
+	recruit_page = recruit_page % page_count
+	var unit_ids := all_ids.slice(recruit_page * 2, recruit_page * 2 + 2)
+	_recruit_page.text = Loc.t("recruit_page", [recruit_page + 1, page_count])
+	_recruit_page.tooltip_text = Loc.t("tip_recruit_page")
 	var buttons: Array[Button] = [_recruit_a, _recruit_b]
 	for index in buttons.size():
 		var button := buttons[index]
@@ -579,7 +613,7 @@ func _refresh_buttons() -> void:
 			continue
 		button.visible = true
 
-		var unit_id := unit_ids[index]
+		var unit_id: String = unit_ids[index]
 		var unit := UnitCatalog.get_unit(unit_id)
 		var costs := game.recruit_costs(PLAYER, unit_id)
 		var gold_cost := int(costs["gold"])
@@ -714,6 +748,8 @@ func _retranslate() -> void:
 	_refresh_menu()
 	if _battle_card.visible and not _last_battles.is_empty():
 		_render_battles()
+	if _preview_card.visible and not preview_target_id.is_empty():
+		_refresh_preview(preview_target_id)
 
 
 # --- Player actions ------------------------------------------------------
@@ -723,13 +759,21 @@ func _on_recruit(index: int) -> void:
 		return
 
 	var unit_ids := UnitCatalog.units_for_faction(PLAYER)
-	if index < 0 or index >= unit_ids.size():
+	var actual_index := recruit_page * 2 + index
+	if actual_index < 0 or actual_index >= unit_ids.size():
 		return
 
-	var result := game.queue_recruit(PLAYER, selected_province_id, unit_ids[index], 1)
+	var result := game.queue_recruit(PLAYER, selected_province_id, unit_ids[actual_index], 1)
 	if not bool(result.get("ok", false)):
 		_show_toast(Loc.reason(String(result.get("reason", ""))))
 	_refresh()
+
+
+## The roster is larger than the two recruit buttons; cycle the shown pair.
+func _on_recruit_page_pressed() -> void:
+	var page_count := maxi(ceili(float(UnitCatalog.units_for_faction(PLAYER).size()) / 2.0), 1)
+	recruit_page = (recruit_page + 1) % page_count
+	_refresh_buttons()
 
 
 func _on_march_pressed() -> void:
@@ -849,6 +893,8 @@ func _handle_march_click(target_id: String) -> void:
 
 func _cancel_march() -> void:
 	march_origin_id = ""
+	preview_target_id = ""
+	_preview_card.visible = false
 	_march_panel.visible = false
 	if map_view != null:
 		map_view.set_march_targets(PackedStringArray())
@@ -865,6 +911,77 @@ func _open_march_panel(available: int) -> void:
 	_march_count.max_value = maxi(available, 1)
 	_march_count.value = maxi(available, 1)
 	_march_panel.visible = true
+
+
+## Changing the troop count re-runs the forecast for the province under the
+## pointer, so the player can tune the army before committing the order.
+func _on_march_count_changed(_value: float) -> void:
+	if not preview_target_id.is_empty():
+		_refresh_preview(preview_target_id)
+
+
+## March mode only: hovering a highlighted neighbour shows the forecast. Nothing
+## is queued until the click, and the panel never intercepts map input.
+func _on_map_hover(province_id: String) -> void:
+	if march_origin_id.is_empty() or province_id.is_empty():
+		preview_target_id = ""
+		_preview_card.visible = false
+		return
+	if game.map_state == null or not game.map_state.are_adjacent(march_origin_id, province_id):
+		preview_target_id = ""
+		_preview_card.visible = false
+		return
+	_refresh_preview(province_id)
+
+
+func _refresh_preview(target_id: String) -> void:
+	var map := game.map_state
+	var origin := map.get_province(march_origin_id)
+	var target := map.get_province(target_id)
+	if origin == null or target == null:
+		_preview_card.visible = false
+		return
+
+	preview_target_id = target_id
+	_preview_card.visible = true
+	_preview_title.text = Loc.t("preview_title", [target.display_name])
+	_preview_title.add_theme_color_override(
+		"font_color", UiStyle.DANGER if target.ambush else UiStyle.GOLD
+	)
+	_preview_power.text = ""
+	_preview_losses.text = ""
+	_preview_band.text = ""
+	_preview_note.text = ""
+
+	# Fog is also intelligence: never reveal a hidden garrison through maths.
+	if not game.is_province_visible(PLAYER, target_id):
+		_preview_note.text = Loc.t("preview_low_intel")
+		return
+
+	var wanted := mini(int(_march_count.value), origin.total_troops())
+	var prediction := CombatResolver.predict(
+		_units_for_count(origin.garrison, wanted), target, PLAYER
+	)
+	if bool(prediction["undefended"]):
+		_preview_note.text = Loc.t("preview_free")
+		return
+
+	var expected := Dictionary(prediction["expected"])
+	var best := Dictionary(prediction["best"])
+	var worst := Dictionary(prediction["worst"])
+	var low := mini(int(best["attacker_losses"]), int(worst["attacker_losses"]))
+	var high := maxi(int(best["attacker_losses"]), int(worst["attacker_losses"]))
+	var outcome := Loc.t("preview_capture") if bool(expected["captured"]) else Loc.t("preview_hold")
+
+	_preview_power.text = Loc.t("preview_power", [
+		float(expected["attacker_power"]), float(expected["defender_power"]),
+		float(expected["ratio"]) * 100.0,
+	])
+	_preview_losses.text = Loc.t("preview_losses", [
+		int(expected["attacker_losses"]), int(expected["defender_losses"]),
+	])
+	_preview_band.text = Loc.t("preview_band", [low, high, outcome])
+	_preview_note.text = Loc.t("preview_note")
 
 
 ## The first `count` troops of a garrison, used for partial marches. Unit order

@@ -13,7 +13,7 @@ O jogador e o bot escrevem ordens sem ver as do adversário; só depois é que o
 5. Os destinos são resolvidos por ordem baralhada com seed, nunca por ordem de facção.
 6. A defesa é a guarnição do snapshot mais milícia e reforços amigáveis chegados nesse turno. Províncias sem defesa caem sem luta; dois exércitos no mesmo destino ou uma troca de províncias geram batalha de campo numa província de planície descartável.
 7. Os sobreviventes regressam à origem apenas se a sua facção ainda a possuir depois de todas as capturas.
-8. Vitória: possuir todas as províncias. Derrota: não possuir nenhuma.
+8. Vitória: possuir todas as províncias, ou manter 70% das províncias transitáveis por três resoluções consecutivas. Derrota: não possuir nenhuma. Ver [vitória dinâmica](dynamic-victory/design.md).
 9. Bot e jogador usam a mesma API pública (`queue_move`, `queue_recruit`, `cancel_order`); o bot nunca lê a fila do jogador.
 
 ## Numbers

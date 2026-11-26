@@ -98,6 +98,11 @@ const AMBUSH_DEFENSE_MULTIPLIER := 1.5
 const AMBUSH_ATTACKER_LOSS_MULTIPLIER := 1.25
 const AMBUSH_TERRAINS := [Terrain.HIGHLANDS, Terrain.MOUNTAINS, Terrain.FOREST]
 
+## Dynamic victory: hold this share of every passable province for this many
+## consecutive resolution steps. Impassable peaks never count towards it.
+const DOMINATION_SHARE := 0.70
+const DOMINATION_STREAK := 3
+
 ## Reverse-engineered from the elevation field at generation time. Peaks are
 ## the highest few mountain provinces: they become impassable and their graph
 ## edges are removed. Highlands are the band just below them.
@@ -150,12 +155,37 @@ const COMBAT_RANDOM_MAX := 1.1
 const UPKEEP_EXPONENT := 1.2
 const UPKEEP_COST_DIVISOR := 15.0
 
+# --- Unit roles and counters ---------------------------------------------
+
+## Six roles per faction, one unit per role. Counters are deterministic shares:
+## a unit only gets the full bonus against a force made entirely of its prey.
+const ROLE_INFANTRY := "infantry"
+const ROLE_RANGED := "ranged"
+const ROLE_CAVALRY := "cavalry"
+const ROLE_ANTI_CAVALRY := "anti_cavalry"
+const ROLE_ARMOUR := "armour"
+const ROLE_SIEGE := "siege"
+
+const COUNTERS := {
+	ROLE_INFANTRY: ROLE_SIEGE,
+	ROLE_SIEGE: ROLE_ARMOUR,
+	ROLE_ARMOUR: ROLE_CAVALRY,
+	ROLE_CAVALRY: ROLE_RANGED,
+	ROLE_RANGED: ROLE_INFANTRY,
+}
+const COUNTER_BONUS := 0.25
+const ANTI_CAVALRY_BONUS := 0.30
+## Siege trains neutralise part of a fortress bonus and hit fortifications hard.
+const SIEGE_FORTRESS_REDUCTION := 0.15
+const SIEGE_ATTACK_BONUS := 0.25
+
 # --- Units ---------------------------------------------------------------
 
 const UNIT_DEFS := {
 	"human_swordsmen": {
 		"display_name": "Swordsmen",
 		"faction": Faction.HUMANS,
+		"role": ROLE_INFANTRY,
 		"attack": 5,
 		"defense": 5,
 		"gold_cost": 24,
@@ -165,26 +195,109 @@ const UNIT_DEFS := {
 	"human_crossbowmen": {
 		"display_name": "Crossbowmen",
 		"faction": Faction.HUMANS,
+		"role": ROLE_RANGED,
 		"attack": 7,
 		"defense": 3,
 		"gold_cost": 30,
 		"manpower_cost": 6,
 		"upkeep": 3,
 	},
+	"human_knights": {
+		"display_name": "Knights",
+		"faction": Faction.HUMANS,
+		"role": ROLE_CAVALRY,
+		"attack": 8,
+		"defense": 6,
+		"gold_cost": 34,
+		"manpower_cost": 7,
+		"upkeep": 4,
+	},
+	"human_pikemen": {
+		"display_name": "Pikemen",
+		"faction": Faction.HUMANS,
+		"role": ROLE_ANTI_CAVALRY,
+		"attack": 5,
+		"defense": 8,
+		"gold_cost": 30,
+		"manpower_cost": 6,
+		"upkeep": 3,
+	},
+	"human_ironclad": {
+		"display_name": "Ironclad",
+		"faction": Faction.HUMANS,
+		"role": ROLE_ARMOUR,
+		"attack": 8,
+		"defense": 9,
+		"gold_cost": 36,
+		"manpower_cost": 9,
+		"upkeep": 4,
+	},
+	"human_catapult": {
+		"display_name": "Arcane Catapult",
+		"faction": Faction.HUMANS,
+		"role": ROLE_SIEGE,
+		"attack": 9,
+		"defense": 3,
+		"gold_cost": 36,
+		"manpower_cost": 8,
+		"upkeep": 4,
+	},
+	"elf_grove_wardens": {
+		"display_name": "Grove Wardens",
+		"faction": Faction.ELVES,
+		"role": ROLE_INFANTRY,
+		"attack": 5,
+		"defense": 6,
+		"gold_cost": 24,
+		"manpower_cost": 5,
+		"upkeep": 2,
+	},
 	"elf_boar": {
 		"display_name": "Mechanical Boar",
 		"faction": Faction.ELVES,
+		"role": ROLE_CAVALRY,
 		"attack": 6,
 		"defense": 7,
 		"gold_cost": 30,
 		"manpower_cost": 6,
 		"upkeep": 3,
 	},
+	"elf_thorn_lancers": {
+		"display_name": "Thorn Lancers",
+		"faction": Faction.ELVES,
+		"role": ROLE_ANTI_CAVALRY,
+		"attack": 6,
+		"defense": 8,
+		"gold_cost": 36,
+		"manpower_cost": 7,
+		"upkeep": 4,
+	},
 	"elf_riflemen": {
 		"display_name": "Riflemen",
 		"faction": Faction.ELVES,
+		"role": ROLE_RANGED,
 		"attack": 8,
 		"defense": 4,
+		"gold_cost": 36,
+		"manpower_cost": 8,
+		"upkeep": 4,
+	},
+	"elf_iron_guard": {
+		"display_name": "Iron Guard",
+		"faction": Faction.ELVES,
+		"role": ROLE_ARMOUR,
+		"attack": 7,
+		"defense": 9,
+		"gold_cost": 36,
+		"manpower_cost": 9,
+		"upkeep": 4,
+	},
+	"elf_howitzer": {
+		"display_name": "Mobile Howitzer",
+		"faction": Faction.ELVES,
+		"role": ROLE_SIEGE,
+		"attack": 9,
+		"defense": 3,
 		"gold_cost": 36,
 		"manpower_cost": 8,
 		"upkeep": 4,
@@ -250,6 +363,30 @@ static func defense_multiplier(terrain: int, is_fortress: bool) -> float:
 	if is_fortress:
 		value += FORTRESS_DEFENSE_BONUS
 	return value
+
+
+## Role of a unit id, or an empty string when the id is unknown.
+static func unit_role(unit_id: String) -> String:
+	var entry: Dictionary = UNIT_DEFS.get(unit_id, {})
+	return String(entry.get("role", ""))
+
+
+## Which role this role has an advantage against in the counter cycle.
+static func counter_target(role: String) -> String:
+	return String(COUNTERS.get(role, ""))
+
+
+## Defence multiplier after attacking siege engines have weakened a fortress.
+## Siege never makes a province weaker than its bare terrain would make it.
+static func defense_multiplier_with_siege(
+	terrain: int, is_fortress: bool, siege_share: float
+) -> float:
+	var base := terrain_defense(terrain)
+	if not is_fortress:
+		return base
+	var share := clampf(siege_share, 0.0, 1.0)
+	var reduction := minf(FORTRESS_DEFENSE_BONUS, SIEGE_FORTRESS_REDUCTION * share)
+	return maxf(base, base + FORTRESS_DEFENSE_BONUS - reduction)
 
 
 ## Base gold/manpower for one province of this terrain, before the capital
