@@ -44,7 +44,7 @@ Autoloads: `Settings`, `Game` (GameState), `TurnManager`. O loop de jogo é orie
 - **Sinais:** `TurnManager` emite mudanças de fase; `Settings` emite `changed` e os ecrãs reconstróem texto em vez de recarregar cena.
 - **Configuração:** todos os números jogáveis vivem em `scripts/data/balance.gd`; os nomes das constantes são a ponte para os `Numbers` de cada `design.md`.
 - **Dados:** `Resource`/`RefCounted` guardam ids e valores, nunca referências a nós. `MapState` detém o grafo e as consultas de vitória.
-- **Persistência:** `SaveSystem` é o único escritor de `user://savegame.json` (JSON atómico, versão 4); `Settings` é o único escritor de `user://settings.cfg`.
+- **Persistência:** `SaveSystem` é o único escritor de `user://savegame.json` (JSON atómico, versão 9); `Settings` é o único escritor de `user://settings.cfg`.
 - **Aleatoriedade:** o mapa e a resolução usam seeds; os destinos são baralhados por seed para não haver vantagem de facção.
 - **Névoa:** nenhum sistema lê `defence_troops()`/`defense_power()` de uma província alheia sem passar por `GameState.visible_troops()`/`visible_defense_power()`; o bot e o HUD partilham o mesmo filtro.
 - **Render e UI:** `UiStyle` detém paleta, escala de fonte e estilos; `UiIcon` detém glifos. Não há glifos escritos à mão por ecrã.
@@ -69,11 +69,12 @@ docs/             GDD, lore, notas de funcionalidades (este guia)
 
 ```bash
 godot --headless --path . --script res://scripts/tools/worldgen_sweep.gd
-godot --headless --path . --script res://scripts/tools/balance_sim.gd
-godot --headless --path . --script res://scripts/tools/ambush_check.gd
+godot --headless --path . --script res://scripts/tools/balance_sim.gd -- 20
+godot --headless --path . --script res://scripts/tools/loader_check.gd
+godot --headless --path . --script res://scripts/tools/loader_continue_check.gd
 ```
 
-`worldgen_sweep.gd` verifica 24 seeds de geração e terreno (incluindo picos e Terras Altas); `balance_sim.gd` corre 20 partidas AI-vs-AI (`41000..41019`); `ambush_check.gd` verifica visibilidade, bónus de emboscada e consumo da ordem. Falta uma verificação headless de arranque pelo menu principal (Novo Jogo + Continuar) — está como cartão no quadro.
+`worldgen_sweep.gd` verifica 24 seeds em três tamanhos (incluindo picos, Terras Altas e ausência de milícia em ermos); `balance_sim.gd` corre 20 partidas AI-vs-AI com `-- 20` (o padrão é 60); os dois `loader` verificam Novo Jogo e Continuar pelo menu principal. O painel de novo jogo escolhe seed, tamanho do mundo e dificuldade; a dificuldade afeta o kit inicial do jogador e os limites de recrutamento/ataque do bot, com Normal como referência medida.
 
 ## 7. Riscos técnicos
 

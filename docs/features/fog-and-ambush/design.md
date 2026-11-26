@@ -8,7 +8,7 @@ O mapa é totalmente conhecido, mas os exércitos não: cada facção vê as sua
 
 1. `GameState.is_province_visible()` é a única fonte de inteligência: províncias próprias e vizinhas. `is_province_explored()` acrescenta a memória de terreno (`explored` por facção).
 2. Uma emboscada própria (ou apenas enfileirada) é invisível ao inimigo mesmo a partir de uma província adjacente. O bot lê o mesmo filtro através de `visible_troops()` e `visible_defense_power()`.
-3. `queue_ambush()` esconde toda a guarnição de uma cidade, fortaleza ou terreno defensivo. Não pode haver outra ordem da mesma província no turno. Marchar no turno seguinte encerra a emboscada, para que um exército escondido não congele a frente para sempre.
+3. `queue_ambush()` esconde uma guarnição em cidades, fortalezas ou ermos. Num ermo a emboscada é especialmente eficaz: ninguém espera um exército em terreno que não defende. Não pode haver outra ordem da mesma província no turno. Marchar no turno seguinte encerra a emboscada.
 4. As ordens de emboscada entram em vigor depois do compromisso de ambos os lados e antes de qualquer combate, na resolução por snapshot.
 5. Se um exército inimigo entrar na província, `CombatResolver` aplica ×1,5 ao poder defensor e ×1,25 às baixas do atacante. O resultado inclui `ambush` e a emboscada é consumida, mesmo que a defesa resista.
 6. Captura, disputa e cancelamento também removem a emboscada. O HUD mostra o badge na província própria e a linha "Emboscada" no relatório de batalha.

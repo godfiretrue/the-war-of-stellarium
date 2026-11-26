@@ -55,6 +55,7 @@ var _pulse_hot := false
 @onready var _resource_icon: UiIcon = $Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox/ResourceIcon
 @onready var _resource: Label = $Root/TopBar/TopMargin/TopRow/ResourceChip/ResourceBox/Resource
 @onready var _domination: Label = $Root/TopBar/TopMargin/TopRow/Domination
+@onready var _difficulty: Label = %Difficulty
 @onready var _turn_badge: PanelContainer = $Root/TopBar/TopMargin/TopRow/TurnBadge
 @onready var _turn: Label = $Root/TopBar/TopMargin/TopRow/TurnBadge/Turn
 @onready var _menu_button: Button = $Root/TopBar/TopMargin/TopRow/MenuButton
@@ -337,6 +338,7 @@ func _refresh_economy() -> void:
 	_domination.add_theme_color_override(
 		"font_color", UiStyle.GOLD if streak > 0 else UiStyle.TEXT_DIM
 	)
+	_difficulty.text = Loc.t("difficulty_hud", [Loc.difficulty_name(game.difficulty)])
 
 	_gold_chip.tooltip_text = Loc.t("tip_gold", [
 		game.get_gold(PLAYER), int(income.get("gold", 0)), upkeep,
@@ -394,7 +396,7 @@ func _refresh_selection() -> void:
 	var faction_color := UiStyle.faction_color(province.owner_faction)
 	_accent_bar.color = faction_color
 
-	var role := Loc.t("role_corridor")
+	var role := Loc.t("role_wildland") if province.is_wildland() else Loc.t("role_corridor")
 	if province.is_capital:
 		role = Loc.t("role_capital")
 	elif province.is_city:
@@ -441,6 +443,8 @@ func _refresh_selection() -> void:
 	])
 	if province.is_fortress:
 		terrain_tip += "\n" + Loc.t("fortress_upkeep", [Balance.FORTRESS_UPKEEP_GOLD])
+	if province.is_wildland():
+		terrain_tip += "\n" + Loc.t("tip_wildland")
 	_meta.tooltip_text = terrain_tip
 
 	var troops := province.total_troops()
@@ -452,8 +456,9 @@ func _refresh_selection() -> void:
 		"font_color", UiStyle.TEXT if (troops > 0 or militia > 0) else UiStyle.TEXT_DIM
 	)
 
-	# defense_power() already applies the terrain multiplier.
-	if troops > 0 or militia > 0:
+	# defense_power() already applies the terrain multiplier. Wildlands never
+	# defend, so their stats stay blank even while an army is marching through.
+	if not province.is_wildland() and (troops > 0 or militia > 0):
 		_attack.text = "%s %.0f" % [Loc.t("stat_attack"), province.attack_power()]
 		_defense.text = "%s %.0f" % [Loc.t("stat_defense"), province.defense_power()]
 	else:
@@ -461,7 +466,7 @@ func _refresh_selection() -> void:
 		_defense.text = ""
 
 	_income.text = ""
-	if not province.resource_type.is_empty():
+	if not province.is_wildland() and not province.resource_type.is_empty():
 		_income.text = Loc.t("income", [
 			province.resource_per_turn, Loc.resource_name(province.resource_type)
 		])

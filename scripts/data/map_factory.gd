@@ -59,23 +59,17 @@ static func _apply_starting_armies(state: MapState) -> void:
 		if capital != null:
 			capital.add_units(unit_id, Balance.CAPITAL_STARTING_TROOPS)
 
-		# Second garrison goes to another city, so recruitment works there too.
-		var second: ProvinceData = null
+		# Second garrison must reach a city: wildlands are corridors with no
+		# permanent garrison and cannot recruit, so they are never a fallback.
 		for province in state.provinces:
-			if province.is_owned_by(faction) and not province.is_capital:
-				if province.is_city:
-					second = province
-					break
-				if second == null:
-					second = province
-		if second != null:
-			second.add_units(unit_id, Balance.SECOND_PROVINCE_STARTING_TROOPS)
+			if province.is_owned_by(faction) and not province.is_capital and province.is_city:
+				province.add_units(unit_id, Balance.SECOND_PROVINCE_STARTING_TROOPS)
+				break
 
-	# Every owned province starts with its full levy. Neutral ground has none,
-	# except fortresses, which keep a small initial garrison so they are a real
-	# obstacle instead of a free race.
+	# Only cities and fortresses raise militia. Neutral fortresses keep the
+	# initial levy; every other neutral province, including wildlands, stays at 0.
 	for province in state.provinces:
-		if not province.is_neutral():
+		if not province.is_neutral() and not province.is_wildland():
 			province.home_guard = province.home_guard_cap()
 		elif province.is_fortress:
 			province.home_guard = Balance.HOME_GUARD_MAX

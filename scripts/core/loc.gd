@@ -74,6 +74,8 @@ const STRINGS := {
 		"role_capital": "Capital",
 		"role_castle": "Castelo",
 		"role_corridor": "Corredor",
+		"role_wildland": "Ermos",
+		"tip_wildland": "Ermos não têm defesa nem recrutamento; só servem de passagem.",
 		"troops": "%d tropas",
 		"troops_none": "Sem tropas",
 		"militia": "%d milícia",
@@ -114,7 +116,7 @@ const STRINGS := {
 		"tip_resource": "%s: %d\nRendimento: +%d",
 		"tip_terrain": "Rendimento base: +%d ouro, +%d mão-de-obra\nDefesa: ×%.2f",
 		"tip_ambush": "Esconder a guarnição até o inimigo entrar (A)",
-		"ambush_reason_ground": "Só em cidades, fortalezas ou terreno defensivo",
+		"ambush_reason_ground": "Só em cidades, fortalezas ou ermos",
 		"ambush_reason_troops": "Não há tropas para emboscar",
 		"ambush_reason_busy": "Esta província já tem uma ordem",
 		"ambush_reason_active": "A guarnição já está em emboscada",
@@ -182,9 +184,26 @@ const STRINGS := {
 		"world_failed": "Não foi possível gerar o mundo.",
 		"loading_world": "A gerar o continente",
 
+		# --- New game setup ---------------------------------------------
+		"new_game_title": "Novo jogo",
+		"world_seed": "Seed (vazia = aleatória)",
+		"world_seed_invalid": "A seed tem de ser um número inteiro.",
+		"world_size": "Tamanho do mundo",
+		"world_size_1": "1x",
+		"world_size_15": "1,5x",
+		"world_size_2": "2x",
+		"difficulty": "Dificuldade",
+		"difficulty_easy": "Fácil",
+		"difficulty_normal": "Normal",
+		"difficulty_hard": "Difícil",
+		"difficulty_hud": "Dificuldade: %s",
+		"new_game_note": "Deixa a seed vazia para gerar um mundo aleatório.",
+		"start_game": "Começar",
+		"back": "Voltar",
+
 		# --- Domination -------------------------------------------------
-		"domination_progress": "Domínio %d%% · %d/%d",
-		"tip_domination": "Território possuído e turnos seguidos acima de 70%.",
+		"domination_progress": "Cidades %d%% · %d/%d",
+		"tip_domination": "Cidades possuídas e turnos seguidos acima de 70%.",
 
 		# --- Game over --------------------------------------------------
 		"victory": "Vitória",
@@ -268,6 +287,8 @@ const STRINGS := {
 		"role_capital": "Capital",
 		"role_castle": "Castle",
 		"role_corridor": "Corridor",
+		"role_wildland": "Wildland",
+		"tip_wildland": "Wildlands have no defence and no recruitment; armies only pass through.",
 		"troops": "%d troops",
 		"troops_none": "No troops",
 		"militia": "%d militia",
@@ -306,7 +327,7 @@ const STRINGS := {
 		"tip_resource": "%s: %d\nIncome: +%d",
 		"tip_terrain": "Base income: +%d gold, +%d manpower\nDefence: ×%.2f",
 		"tip_ambush": "Hide the garrison until the enemy enters (A)",
-		"ambush_reason_ground": "Cities, fortresses or defensive ground only",
+		"ambush_reason_ground": "Cities, fortresses or wildlands only",
 		"ambush_reason_troops": "No troops to hide",
 		"ambush_reason_busy": "This province already has an order",
 		"ambush_reason_active": "The garrison is already ambushing",
@@ -374,9 +395,26 @@ const STRINGS := {
 		"world_failed": "Could not generate the world.",
 		"loading_world": "Generating the continent",
 
+		# --- New game setup ---------------------------------------------
+		"new_game_title": "New Game",
+		"world_seed": "Seed (blank = random)",
+		"world_seed_invalid": "The seed must be a whole number.",
+		"world_size": "World size",
+		"world_size_1": "1x",
+		"world_size_15": "1.5x",
+		"world_size_2": "2x",
+		"difficulty": "Difficulty",
+		"difficulty_easy": "Easy",
+		"difficulty_normal": "Normal",
+		"difficulty_hard": "Hard",
+		"difficulty_hud": "Difficulty: %s",
+		"new_game_note": "Leave the seed blank for a random world.",
+		"start_game": "Start",
+		"back": "Back",
+
 		# --- Domination -------------------------------------------------
-		"domination_progress": "Domination %d%% · %d/%d",
-		"tip_domination": "Land held and consecutive turns above 70%.",
+		"domination_progress": "Cities %d%% · %d/%d",
+		"tip_domination": "Cities held and consecutive turns above 70%.",
 
 		# --- Game over --------------------------------------------------
 		"victory": "Victory",
@@ -421,6 +459,17 @@ static func faction_name(faction: int) -> String:
 		Balance.Faction.ELVES:
 			return t("faction_elves")
 	return t("faction_neutral")
+
+
+static func difficulty_name(difficulty: int) -> String:
+	match difficulty:
+		Balance.Difficulty.EASY:
+			return t("difficulty_easy")
+		Balance.Difficulty.NORMAL:
+			return t("difficulty_normal")
+		Balance.Difficulty.HARD:
+			return t("difficulty_hard")
+	return t("difficulty_normal")
 
 
 static func terrain_name(terrain: int) -> String:

@@ -92,6 +92,24 @@ func controlled_province_count(faction: int) -> int:
 	return total
 
 
+## Cities and fortresses are the only holdings that count. Wildlands follow
+## their city's owner but produce nothing and never decide a war.
+func city_count(faction: int) -> int:
+	var total := 0
+	for province in provinces:
+		if province.is_city and province.is_owned_by(faction):
+			total += 1
+	return total
+
+
+func city_count_total() -> int:
+	var total := 0
+	for province in provinces:
+		if province.is_city:
+			total += 1
+	return total
+
+
 ## Impassable peaks are scenery: nobody can own them, so they are excluded from
 ## the victory threshold.
 func passable_province_count() -> int:
@@ -118,27 +136,24 @@ func factions_with_provinces() -> Array[int]:
 
 
 func is_eliminated(faction: int) -> bool:
-	return controlled_province_count(faction) == 0
+	return city_count(faction) == 0
 
 
-## Share of all passable provinces held by a faction, in 0.0–1.0.
+## Share of all cities held by a faction, in 0.0–1.0.
 func domination_share(faction: int) -> float:
-	var target := passable_province_count()
+	var target := city_count_total()
 	if target <= 0:
 		return 0.0
-	return float(controlled_province_count(faction)) / float(target)
+	return float(city_count(faction)) / float(target)
 
 
-## Returns the faction that owns every province, or NEUTRAL when the game is
-## still running.
+## Returns the faction that holds every city, or NEUTRAL while the war goes on.
 func winning_faction() -> int:
-	if provinces.is_empty():
-		return Balance.Faction.NEUTRAL
-	var target := passable_province_count()
+	var target := city_count_total()
 	if target <= 0:
 		return Balance.Faction.NEUTRAL
 	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
-		if controlled_province_count(faction) == target:
+		if city_count(faction) == target:
 			return faction
 	return Balance.Faction.NEUTRAL
 

@@ -22,6 +22,7 @@ var _loading_state: MapState
 var _loading_started_ms := 0
 var _loading_continue := false
 var _loading_save: Dictionary = {}
+var _loading_difficulty: int = Balance.Difficulty.NORMAL
 var _intro_tween: Tween
 
 @onready var _new_game: Button = %NewGame
@@ -32,6 +33,7 @@ var _intro_tween: Tween
 @onready var _menu_column: Control = %MenuMargin
 @onready var _black_hole: Control = %BlackHole
 @onready var _settings_panel: SettingsPanel = %SettingsPanel
+@onready var _new_game_panel = %NewGamePanel
 @onready var _settings: GameSettings = get_node("/root/Settings")
 
 
@@ -56,11 +58,13 @@ func _ready() -> void:
 		push_error("MainMenu: Game/TurnManager autoloads are missing")
 		return
 
-	_new_game.pressed.connect(_on_new_game)
+	_new_game.pressed.connect(_open_new_game_setup)
 	_continue.pressed.connect(_on_continue)
 	_settings_button.pressed.connect(_open_settings)
 	_quit.pressed.connect(_on_quit)
 	_settings_panel.closed.connect(_on_settings_closed)
+	_new_game_panel.confirmed.connect(_on_new_game_confirmed)
+	_new_game_panel.closed.connect(_on_settings_closed)
 	_settings.changed.connect(_on_settings_changed)
 
 	_continue.disabled = not SaveSystem.has_save()
@@ -103,10 +107,30 @@ func _on_settings_closed() -> void:
 	_new_game.grab_focus()
 
 
+func _open_new_game_setup() -> void:
+	if _loading:
+		return
+	_new_game_panel.open()
+
+
+## Immediate start with the shipped defaults. The headless menu checks call
+## this directly; the button itself opens the setup panel first.
 func _on_new_game() -> void:
 	if _loading:
 		return
-	_begin_loading(-1, false, {}, MapFactory.DEFAULT_WORLD_SCALE)
+	_begin_loading(
+		-1, false, {}, MapFactory.DEFAULT_WORLD_SCALE, Balance.Difficulty.NORMAL
+	)
+
+
+func _on_new_game_confirmed(options: Dictionary) -> void:
+	if _loading:
+		return
+	_begin_loading(
+		int(options.get("seed", -1)), false, {},
+		float(options.get("world_scale", MapFactory.DEFAULT_WORLD_SCALE)),
+		int(options.get("difficulty", Balance.Difficulty.NORMAL))
+	)
 
 
 func _on_continue() -> void:
@@ -122,17 +146,20 @@ func _on_continue() -> void:
 	# A save remembers the world size it was created on, so loading always
 	# rebuilds the same continent instead of the current default.
 	var world_scale := float(data.get("world_scale", MapFactory.DEFAULT_WORLD_SCALE))
-	_begin_loading(int(data.get("map_seed", 0)), true, data, world_scale)
+	var difficulty := int(data.get("difficulty", Balance.Difficulty.NORMAL))
+	_begin_loading(int(data.get("map_seed", 0)), true, data, world_scale, difficulty)
 
 
 ## Generates the world on a worker thread so the menu and the loading overlay
 ## keep animating. Finalization, save application and the scene change happen
 ## on the main thread in _process().
 func _begin_loading(map_seed: int, is_continue: bool, save_data: Dictionary,
-		world_scale: float = MapFactory.DEFAULT_WORLD_SCALE) -> void:
+		world_scale: float = MapFactory.DEFAULT_WORLD_SCALE,
+		difficulty: int = Balance.Difficulty.NORMAL) -> void:
 	_loading = true
 	_loading_continue = is_continue
 	_loading_save = save_data
+	_loading_difficulty = difficulty
 	_loading_done = false
 	_loading_state = null
 	_loading_started_ms = Time.get_ticks_msec()
@@ -182,11 +209,11 @@ func _process(_delta: float) -> void:
 	# thread even though the expensive terrain/province generation ran off it.
 	MapFactory.finalize_map(state)
 	if _loading_continue:
-		game.start_new_game_from_map(state)
+		game.start_new_game_from_map(state, _loading_difficulty)
 		SaveSystem.apply_save(game, _loading_save)
 		turn_manager.resume_game(int(_loading_save.get("turn_number", 1)))
 	else:
-		turn_manager.start_game_from_map(state)
+		turn_manager.start_game_from_map(state, _loading_difficulty)
 
 	_enter_map()
 
@@ -235,7 +262,7 @@ func _set_busy(busy: bool) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _loading or _settings_panel.visible:
+	if _loading or _settings_panel.visible or _new_game_panel.visible:
 		return
 	if event.is_action_pressed("ui_cancel"):
 		_open_settings()

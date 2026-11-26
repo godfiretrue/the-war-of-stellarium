@@ -10,7 +10,9 @@ extends SceneTree
 
 const GAMES := 60
 const BASE_SEED := 41000
-const MAX_TURNS := 400
+## Tough, near-parity wars are allowed to run for hundreds of turns; the cap
+## only exists to catch a genuinely frozen match.
+const MAX_TURNS := 800
 ## Balance is measured on the shipping world size.
 const WORLD_SCALE := 2.0
 
@@ -140,8 +142,11 @@ func _winner() -> int:
 	var leading := game.map_state.winning_faction()
 	if leading != Balance.Faction.NEUTRAL:
 		return leading
-	# A domination-streak victory ends the game without owning every province.
-	return game.domination_winner()
+	# Domination and the long-war tiebreak can both end the game early.
+	var winner := game.domination_winner()
+	if winner == Balance.Faction.NEUTRAL:
+		winner = game.stalemate_winner()
+	return winner
 
 
 func _report() -> void:

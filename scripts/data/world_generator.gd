@@ -60,6 +60,19 @@ var _rng := RandomNumberGenerator.new()
 var _anchors: Array[Dictionary] = []
 var _spine_phase: float = 0.0
 
+## Seed-driven continent profile. Rebuilt on every attempt so a failed seed can
+## recover with a different outline instead of retrying the same bad shape.
+var _continent_center := Vector2.ZERO
+var _continent_angle := 0.0
+var _continent_aspect := 1.0
+var _coast_roughness := 0.1
+var _lobe_count := 3
+var _lobe_phase := 0.0
+var _peninsula_angle := 0.0
+var _peninsula_length := 0.0
+var _warp_amount := 75.0
+var _min_seed_distance := MIN_SEED_DISTANCE
+
 ## World size for this build. build() sets these from the requested scale, so
 ## every field, table and image below works on the real dimensions instead of
 ## the 1x reference grid.
@@ -108,7 +121,6 @@ func build(world_seed: int, world_scale: float = 1.0) -> MapState:
 	# Province and city density follow the area, so provinces stay the same
 	# physical size while the continent grows.
 	_target_provinces = roundi(TARGET_PROVINCES * _scale * _scale)
-	_river_min_drainage = roundi(RIVER_MIN_DRAINAGE * _scale * _scale)
 	_ensure_neighbor_tables()
 	for attempt in MAX_ATTEMPTS:
 		var state := _try_build(world_seed + attempt * 7919)
@@ -201,6 +213,15 @@ func _try_build(world_seed: int) -> MapState:
 	_seed = world_seed
 	_rng.seed = world_seed
 	_spine_phase = _rng.randf_range(0.0, TAU)
+	_build_shape_profile()
+	# River density and province spacing vary a little by seed, but always stay
+	# above the sweep's minimum river count and inside the target province count.
+	_river_min_drainage = roundi(
+		float(RIVER_MIN_DRAINAGE) * _scale * _scale * _rng.randf_range(0.82, 1.0)
+	)
+	# Spacing stays in world pixels: a bigger world gets proportionally more
+	# provinces, so each one keeps its physical size.
+	_min_seed_distance = MIN_SEED_DISTANCE * _rng.randf_range(0.94, 1.06)
 	_anchors = _make_anchors()
 	_rivers.clear()
 
@@ -211,6 +232,27 @@ func _try_build(world_seed: int) -> MapState:
 	if not _grow_provinces():
 		return null
 	return _assemble_state()
+
+
+## Picks the seed's outline: centre, tilt, aspect, bays and an optional
+## peninsula. Anchors stay where the story needs them, so the continent always
+## bends around them instead of moving them.
+func _build_shape_profile() -> void:
+	_continent_center = Vector2(
+		_world_w * _rng.randf_range(0.47, 0.53),
+		_world_h * _rng.randf_range(0.41, 0.47)
+	)
+	_continent_angle = deg_to_rad(_rng.randf_range(-16.0, 16.0))
+	_continent_aspect = _rng.randf_range(0.86, 1.18)
+	_coast_roughness = _rng.randf_range(0.05, 0.14)
+	_lobe_count = _rng.randi_range(2, 5)
+	_lobe_phase = _rng.randf_range(0.0, TAU)
+	_warp_amount = _rng.randf_range(55.0, 95.0)
+	if _rng.randf() < 0.65:
+		_peninsula_angle = _rng.randf_range(0.0, TAU)
+		_peninsula_length = _rng.randf_range(0.16, 0.38)
+	else:
+		_peninsula_length = 0.0
 
 
 func _noise(noise_seed: int, frequency: float, fractal: int, octaves: int) -> FastNoiseLite:
@@ -235,20 +277,50 @@ func _generate_fields() -> void:
 	_mount.resize(total)
 	_mount.fill(0.0)
 
-	# 1. Continental base: a warped elliptical landmass with gentle lowlands.
+	# 1. Continental base: a seed-shaped, warped landmass with gentle lowlands.
+	var anchor_points: Array[Vector2] = []
+	for anchor in _anchors:
+		anchor_points.append(anchor["pos"])
+	var peninsula_dir := Vector2(cos(_peninsula_angle), sin(_peninsula_angle))
+	var peninsula_start := _continent_center \
+			+ peninsula_dir * (410.0 * _scale * _continent_aspect)
+	var peninsula_end := _continent_center + peninsula_dir * (
+		575.0 * _scale * _continent_aspect * (1.0 + _peninsula_length)
+	)
 	for y in _grid_h:
 		for x in _grid_w:
 			var px := (float(x) + 0.5) * CELL
 			var py := (float(y) + 0.5) * CELL
-			var wx := px + warp.get_noise_2d(px, py) * 75.0
-			var wy := py + warp.get_noise_2d(px + 517.0, py + 211.0) * 75.0
-			# The continent keeps its proportions: the ellipse centre and radii
-			# scale with the world, while the noise frequencies stay in pixels.
-			var centre := Vector2(_world_w * 0.5, _world_h * 0.44)
-			var nx := (wx - centre.x) / (575.0 * _scale)
-			var ny := (wy - centre.y) / (240.0 * _scale)
-			var dist := sqrt(nx * nx + ny * ny)
+			var warp_amount := _warp_amount * _scale
+			var wx := px + warp.get_noise_2d(px, py) * warp_amount
+			var wy := py + warp.get_noise_2d(px + 517.0, py + 211.0) * warp_amount
+			# Rotation, aspect and bays are picked from the seed; radii still
+			# scale with the world so provinces keep their physical size.
+			var local := Vector2(wx, wy) - _continent_center
+			local = local.rotated(-_continent_angle)
+			var nx := local.x / (575.0 * _scale * _continent_aspect)
+			var ny := local.y / (240.0 * _scale)
+			var bearing := atan2(ny, nx)
+			var lobes := 1.0 \
+					+ _coast_roughness * sin(float(_lobe_count) * bearing + _lobe_phase) \
+					+ _coast_roughness * 0.45 \
+						* sin(float(_lobe_count + 2) * bearing - _lobe_phase * 0.7)
+			var dist := sqrt(nx * nx + ny * ny) / maxf(lobes, 0.65)
 			var mask := clampf(1.0 - pow(dist, 3.0), 0.0, 1.0)
+			if _peninsula_length > 0.0:
+				var point := Vector2(px, py)
+				var closest := Geometry2D.get_closest_point_to_segment(
+					point, peninsula_start, peninsula_end
+				)
+				var width := 78.0 * _scale
+				mask = maxf(mask, smoothstep(width, width * 0.35,
+					point.distance_to(closest)) * 0.85)
+			# The six authored places are always dry land on the main continent.
+			for anchor_point in anchor_points:
+				mask = maxf(mask, smoothstep(
+					135.0 * _scale, 45.0 * _scale,
+					Vector2(px, py).distance_to(anchor_point)
+				))
 			# Fade to open sea under the top and bottom HUD bars; the coast is
 			# pushed behind the bars so no foam line shows in the play area.
 			mask *= smoothstep(20.0 * _scale, 80.0 * _scale, py) \
@@ -345,16 +417,36 @@ func _add_range(points: Array, width: float, height: float) -> void:
 					_mount[index] = strength
 
 
-## Layout of the ranges: one dominant spine, a secondary chain in the west and
-## a small range through every mountain anchor.
+## Layout of the ranges: one north-south spine that casts the west-to-east rain
+## shadow, a seed-driven number of secondary chains, and a short chain through
+## every mountain anchor. All are tapered point chains, never noise blobs.
 func _build_ranges() -> void:
-	var spine_start := Vector2(620.0, 90.0) * _scale
-	var spine := _range_points(spine_start, deg_to_rad(96.0), 22, 26.0 * _scale, 0.85, 0.16)
-	_add_range(spine, 48.0 * _scale, 0.46)
+	var spine_start := Vector2(
+		_world_w * _rng.randf_range(0.34, 0.62),
+		_world_h * _rng.randf_range(0.06, 0.20)
+	)
+	var spine_steps := _rng.randi_range(18, 25)
+	var spine := _range_points(
+		spine_start, deg_to_rad(_rng.randf_range(74.0, 106.0)),
+		spine_steps, _rng.randf_range(22.0, 29.0) * _scale,
+		_rng.randf_range(0.55, 0.95), 0.16
+	)
+	_add_range(spine, _rng.randf_range(40.0, 56.0) * _scale,
+			_rng.randf_range(0.40, 0.50))
 
-	var west_start := Vector2(250.0, 350.0) * _scale
-	var west := _range_points(west_start, deg_to_rad(-22.0), 15, 31.0 * _scale, 0.55, 0.12)
-	_add_range(west, 36.0 * _scale, 0.34)
+	var extra := _rng.randi_range(1, 3)
+	for _i in extra:
+		var start := Vector2(
+			_world_w * _rng.randf_range(0.12, 0.86),
+			_world_h * _rng.randf_range(0.18, 0.66)
+		)
+		var points := _range_points(
+			start, _rng.randf_range(0.0, TAU),
+			_rng.randi_range(10, 18), _rng.randf_range(20.0, 32.0) * _scale,
+			_rng.randf_range(0.35, 0.75), 0.14
+		)
+		_add_range(points, _rng.randf_range(28.0, 46.0) * _scale,
+				_rng.randf_range(0.26, 0.40))
 
 	for anchor in _anchors:
 		if int(anchor["terrain"]) != Balance.Terrain.MOUNTAINS:
@@ -366,7 +458,7 @@ func _build_ranges() -> void:
 			var t := float(i)
 			var angle := heading + sin(t * 0.5 + _spine_phase) * 0.55
 			points.append(center + Vector2(cos(angle), sin(angle)) * (t * 28.0 * _scale))
-		_add_range(points, 42.0 * _scale, 0.38)
+		_add_range(points, 42.0 * _scale, _rng.randf_range(0.32, 0.42))
 
 
 ## Lifts the base terrain where the ranges were stamped. Two noise scales: a
@@ -663,7 +755,7 @@ func _grow_provinces() -> bool:
 		var point := _cell_point(candidate)
 		var free := true
 		for existing in _seed_cells:
-			if _cell_point(existing).distance_to(point) < MIN_SEED_DISTANCE:
+			if _cell_point(existing).distance_to(point) < _min_seed_distance:
 				free = false
 				break
 		if free:
@@ -882,8 +974,14 @@ func _assemble_state() -> MapState:
 					linked.append(neighbor_index)
 		adjacency.append(linked)
 
+	# A narrow neck can leave a province without the three border cells the
+	# graph needs. Reject the shape and let MAX_ATTEMPTS try another one.
+	if not _adjacency_connected(adjacency, peaks, count):
+		return null
+
 	_designate_cities(provinces, adjacency, coast_cells, river_cells, peaks)
 	_distribute_ownership(provinces, adjacency)
+	_assign_city_influence(provinces)
 
 	for index in count:
 		for neighbor_index: int in adjacency[index]:
@@ -959,6 +1057,28 @@ func _choose_peaks(candidates: Array[int], full_adjacency: Array, count: int) ->
 		if _connected_without(full_adjacency, chosen, count):
 			return chosen.duplicate()
 	return {}
+
+
+func _adjacency_connected(adjacency: Array, peaks: Dictionary, count: int) -> bool:
+	var start := -1
+	for index in count:
+		if not peaks.has(index):
+			start = index
+			break
+	if start < 0:
+		return false
+	var seen: Dictionary = {start: true}
+	var queue: Array[int] = [start]
+	var head := 0
+	while head < queue.size():
+		var current: int = queue[head]
+		head += 1
+		for neighbor_index: int in adjacency[current]:
+			if seen.has(neighbor_index):
+				continue
+			seen[neighbor_index] = true
+			queue.append(neighbor_index)
+	return seen.size() == count - peaks.size()
 
 
 func _connected_without(full_adjacency: Array, excluded: Dictionary, count: int) -> bool:
@@ -1195,6 +1315,64 @@ func _distribute_ownership(provinces: Array[ProvinceData], adjacency: Array) -> 
 				provinces[best].owner_faction = faction
 				counts[faction] = int(counts[faction]) + 1
 				progress = true
+
+
+## Wildlands have no owner of their own: they follow the nearest city. Capturing
+## that city flips its whole hinterland in one resolution step, without unrest.
+func _assign_city_influence(provinces: Array[ProvinceData]) -> void:
+	var cities: Array[ProvinceData] = []
+	for province in provinces:
+		if province.is_city:
+			cities.append(province)
+	if cities.is_empty():
+		return
+
+	for province in provinces:
+		if province.is_city:
+			continue
+		var best: ProvinceData = null
+		var best_distance := INF
+		for city in cities:
+			var distance := province.map_position.distance_squared_to(city.map_position)
+			if distance < best_distance or (
+					is_equal_approx(distance, best_distance)
+					and best != null and city.id < best.id
+				):
+				best = city
+				best_distance = distance
+		province.influence_city_id = best.id
+		province.owner_faction = best.owner_faction
+
+	# Influence assignment can trim the starting blocks. Guarantee the sweep's
+	# three-province minimum by attaching a few wildlands to each capital.
+	for faction: int in [Balance.Faction.HUMANS, Balance.Faction.ELVES]:
+		var capital: ProvinceData = null
+		var owned := 0
+		for province in provinces:
+			if province.is_capital and province.capital_of == faction:
+				capital = province
+			if province.is_owned_by(faction):
+				owned += 1
+		if capital == null or owned >= 3:
+			continue
+		var candidates: Array[Dictionary] = []
+		for province in provinces:
+			if province.is_city or province.is_owned_by(faction):
+				continue
+			candidates.append({
+				"province": province,
+				"distance": province.map_position.distance_squared_to(capital.map_position),
+			})
+		candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return float(a["distance"]) < float(b["distance"])
+		)
+		for entry in candidates:
+			if owned >= 3:
+				break
+			var province: ProvinceData = entry["province"]
+			province.influence_city_id = capital.id
+			province.owner_faction = faction
+			owned += 1
 
 
 # --- Geometry --------------------------------------------------------------

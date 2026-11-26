@@ -25,6 +25,8 @@ const TEXT_DISABLED := Color(0.42, 0.44, 0.52)
 const HUMAN := Color(0.35, 0.60, 1.0)
 const ELVES := Color(0.30, 0.90, 0.50)
 const NEUTRAL := Color(0.72, 0.74, 0.80)
+## Muted marker for pass-through wildlands: no castle, no garrison, no claim.
+const WILDLAND := Color(0.55, 0.62, 0.66, 0.70)
 
 # --- One font scale ------------------------------------------------------
 # Every game screen picks one of these three sizes so the HUD, the settings

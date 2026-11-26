@@ -27,7 +27,7 @@ func _run() -> void:
 
 	_backup_save()
 
-	turn_manager.start_game(TEST_SEED)
+	turn_manager.start_game(TEST_SEED, MapFactory.DEFAULT_WORLD_SCALE, Balance.Difficulty.HARD)
 	game.gold[Balance.Faction.HUMANS] = TEST_GOLD
 	if not SaveSystem.save_game(game, TEST_TURN):
 		_fail("could not create test save")
@@ -80,9 +80,12 @@ func _run() -> void:
 	if game.get_gold(Balance.Faction.HUMANS) != TEST_GOLD:
 		_fail("saved stockpile was not applied")
 		return
+	if game.difficulty != Balance.Difficulty.HARD:
+		_fail("saved difficulty was not applied")
+		return
 
 	_restore_save()
-	print("[loader] Continue OK: turn %d, stockpile and map restored" % TEST_TURN)
+	print("[loader] Continue OK: turn %d, stockpile, difficulty and map restored" % TEST_TURN)
 	quit(0)
 
 

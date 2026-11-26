@@ -17,11 +17,12 @@ Turns are **simultaneous**: the player queues orders, the bot queues its own
 orders without seeing them, and only then does one snapshot-based resolution
 apply both sides. Pressing March or Recruit never changes the board by itself.
 
-The rules also carry anti-snowball friction: every province raises a defensive
-militia (home guard), a captured province pays nothing until it settles, losing
-the capital is a temporary penalty rather than a loss, and the bot leaves a
-tiered garrison behind when it marches. See "Rules implemented" and "Balance
-findings" for the numbers behind each.
+The rules also carry anti-snowball friction: every city and fortress raises a
+defensive militia (home guard), a captured city pays nothing until it settles,
+losing the capital is a temporary penalty rather than a loss, and the bot leaves
+a tiered garrison behind when it marches. Everything else is a wildland corridor
+with no militia, no income and no battle; it follows the owner of its nearest
+city. See "Rules implemented" and "Balance findings" for the numbers.
 
 Provinces have five terrains (plains, forest, coast, mountains, Highlands) plus
 a `is_fortress` role: terrain drives gold/manpower income and defence, while a
@@ -83,7 +84,8 @@ scripts/ui/main_menu.gd       menu actions
 scripts/ui/settings_panel.gd  settings overlay logic (shared by menu + HUD)
 scripts/ui/ui_style.gd        shared palette, HUD Theme and button styleboxes
 scripts/tools/worldgen_sweep.gd  headless seed sweep (invariant test)
-scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (20 games)
+scripts/tools/balance_sim.gd     headless AI-vs-AI balance runner (60 by default)
+scripts/ui/new_game_panel.gd     seed / world size / difficulty setup panel
 ```
 
 ## Architecture rules
@@ -177,20 +179,24 @@ bar, a province dock at the bottom centre and panels on the screen edges.
   are generated and neutral. The province graph is always connected.
 - 2 factions + neutral provinces; each faction starts with a connected block
   around its capital (~30% of the map, clamped 5-8 provinces).
-- 10 cities per map: the 6 anchors plus up to 4 promoted towns.
-- Recruitment is only allowed in cities/castles (`ProvinceData.is_city`); open
-  corridors are movement-only.
+- 10 cities per map at 1x (6 anchors plus 4 promoted towns), scaling with world
+  size. Everything else is a wildland.
+- Recruitment is only allowed in cities/castles (`ProvinceData.is_city`);
+  wildlands are movement-only corridors for both factions.
+- Each wildland records its nearest city as an influence source. That city's
+  owner owns the wildland, so capturing a city flips its hinterland bloodlessly
+  with no unrest. Wildlands never produce or raise militia and never defend —
+  except for an ambush hidden there, which springs when an enemy marches in
+  without ever capturing the corridor.
 - Income at resolution: per-terrain base gold/manpower (Plains 13/10, Forest
   12/6, Coast 20/2, Mountains 19/4), capital +8/+2, faction resource (Humans:
   Aether on plains, forest and coast; Elves: Iron on mountains) +2. A fortress
   costs 4 gold/turn upkeep, charged even while the province is in unrest.
-- Home guard (`Balance.HOME_GUARD_*`): every owned province holds militia that
-  defends but never marches, costs no upkeep and is lost with the province. It
-  regenerates 1/turn up to 2 (4 in a capital), starts full in the initial map,
-  absorbs defender losses before the garrison, and counts in `defence_troops()`
-  so the bot treats a militia-only province as defended. Neutral fortresses
-  start with `HOME_GUARD_MAX` (2) militia and keep it through
-  `regen_home_guards()`; other neutral ground stays empty.
+- Home guard (`Balance.HOME_GUARD_*`): only cities and fortresses hold militia.
+  It defends but never marches, costs no upkeep and is lost with the province.
+  It regenerates 1/turn up to 2 (4 in a capital), starts full in the initial map,
+  absorbs defender losses before the garrison, and counts in `defence_troops()`.
+  Neutral fortresses keep `HOME_GUARD_MAX` (2); wildlands always hold 0.
 - Conquest unrest (`Balance.CONQUEST_UNREST_*`): a province that changes hands
   produces no income and cannot recruit for 2 resolution steps. Captures set
   the counter in `resolve_turn()`; `advance_turn_state()` counts it down after
@@ -237,7 +243,8 @@ bar, a province dock at the bottom centre and panels on the screen edges.
   defender loses `ceil(def*ratio*1.0)`, militia first then the garrison.
   Loss factors were left at 0.7/1.0: the target was reached without them.
 - Income and upkeep are applied after resolution, then the next planning phase
-  starts. Win: own every province. Lose: own none.
+  starts. Win: own every city (or hold 70% of cities for three resolutions).
+  Lose: own no city. Wildlands never decide the war.
 
 ## World generation
 
@@ -252,12 +259,13 @@ cell to a province index.
 
 Pipeline (`world_generator.gd`):
 
-1. `_generate_fields` - warped elliptical landmass + a mountain field built by
-   `_build_ranges`/`_apply_ranges` (long tapered chains of segments, never
-   radial blobs: noise-only belts produced worm/crater artifacts). Then
-   `_carve_anchor_passes` keeps plains/coast anchors low. Moisture has a
-   west-to-east rain shadow behind ranges, temperature has latitude plus a
-   lapse rate.
+1. `_generate_fields` - a seed-shaped landmass: rotated ellipse with jittered
+   centre, aspect, bays, coastline roughness and an optional peninsula, plus
+   a land floor under the six anchors so the continent always bends around
+   them. Mountains come from `_build_ranges`/`_apply_ranges` (seed-driven chains
+   of tapered segments, never radial blobs: noise-only belts produced
+   worm/crater artifacts). `_carve_anchor_passes` keeps plains/coast anchors
+   low. Moisture keeps a west-to-east rain shadow behind the main range.
 2. `_keep_main_land` - drops disconnected islands so the continent is one piece.
 3. `_trace_rivers` - `_priority_flood` fills depressions (adding a tiny
    `FILL_EPSILON` per step so basin floors keep a downhill gradient),
@@ -283,24 +291,24 @@ biomes, hill-shaded relief, rock and snow. Rivers and march routes are drawn by
 `_draw_overlay` on a node above the provinces. `province_view.gd` only adds
 ownership tint, borders and markers.
 
-Invariants are checked by `scripts/tools/worldgen_sweep.gd` (24 seeds, ~700-
-1000 ms per world, exits 1 on failure):
+Invariants are checked by `scripts/tools/worldgen_sweep.gd` (24 seeds at 1x,
+1.5x and 2x, exits 1 on failure):
 
 ```
 godot --headless --path . --script res://scripts/tools/worldgen_sweep.gd
 ```
 
-It asserts 21 provinces, all 6 anchors present with their expected terrain and
-fortress flag, connected graph, non-empty polygons, exactly 10 cities, at least
-6 rivers and at least 3 provinces per faction, and prints the terrain
-distribution (latest: Plains 172, Mountains 146, Forest 161, Coast 25 across 24
-seeds). Run it after any change to generation.
+It asserts the province and city targets for each scale, all 6 anchors with
+their terrain and fortress flag, a connected graph, non-empty polygons, the
+river minimum, at least 3 provinces per faction, and that wildlands hold no
+militia and point at a real influencing city. Run it after any change to
+generation.
 
 ## Balance findings (measured, not guessed)
 
 `BotController` supports `bot_faction` and `auto_play=false`, which is how the
 AI-vs-AI runs were done. `scripts/tools/balance_sim.gd` drives 20 fixed seeds
-(`41000..41019`, 400-turn cap, autosave off):
+(`41000..41019`, 800-turn cap, autosave off):
 
 ```
 godot --headless --path . --script res://scripts/tools/balance_sim.gd
@@ -422,10 +430,11 @@ win rate, so always check that column.
   This bot never returns `RUNNING` — a turn is resolved in one tick.
 - JSON parses every number as float: cast with `int()` when loading saves.
 - Saves go to `user://savegame.json` via a `.tmp` file + rename. Never `.tres`.
-- Save `VERSION` is **5**. Terrain classification changes which provinces are
-  cities and fortresses, so generated names and ids differ from version 4; old
-  saves cannot be rebuilt. `_migrate` returns `{}` for any version that is not
-  the current one and the caller treats that as "no save".
+- Save `VERSION` is **9** and stores seed, world size, difficulty, stockpiles
+  and city owners. v8 gains NORMAL difficulty and a zeroed city streak; v6 and
+  older worlds are refused because their generated ids no longer match.
+  `_migrate` returns `{}` for unsupported versions and the caller treats that
+  as "no save". Wildland owners are rebuilt from their influencing city on load.
 - Orders are plain dictionaries (`{"type": "move", ...}`), never Resources or
   actions. Validation happens at queue time, so build orders through
   `queue_move()` / `queue_recruit()`; `resolve_turn()` trusts what it is given.
@@ -440,9 +449,9 @@ win rate, so always check that column.
 - A `PackedInt32Array` fetched from a `Dictionary`/`Array` with `as` is a
   **copy**; mutate the original or write it back. `PackedInt32Array` has no
   `pop_back` (convert to `Array` first).
-- World geometry is hard-coded to 1152x648: ellipse centre (576, 286), radii
-  (575, 240), shader `world_size`, grid 288x162 with `CELL = 4`. Change the
-  window size and all four must move together.
+- World geometry is tied to 1152x648 at 1x: shader `world_size`, grid 288x162
+  with `CELL = 4`, and all field/radius constants scale with `world_scale`.
+  Change the window size and all four must move together.
 - In `game_eval`, `gen.call(...)` returns `Variant`, so annotate noise locals
   (`var warp: FastNoiseLite = gen.call(...)`) or GDScript fails to infer types.
   A runtime error there leaves the game loop frozen (`EVAL_GAME_NOT_READY`);

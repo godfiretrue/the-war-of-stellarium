@@ -1,5 +1,5 @@
 extends SceneTree
-## Headless check for dynamic victory and the save v7 -> v8 migration.
+## Headless check for city-based dynamic victory and the save v8 -> v9 migration.
 ##
 ##   godot --headless --path . --script res://scripts/tools/domination_check.gd
 ##
@@ -26,17 +26,17 @@ func _run() -> void:
 		_fail("map was not generated")
 		return
 
-	var passable := game.map_state.passable_province_count()
-	var needed := ceili(float(passable) * Balance.DOMINATION_SHARE)
-	# A fresh game already gives each faction its capital and a second province.
+	var cities := game.map_state.city_count_total()
+	var needed := ceili(float(cities) * Balance.DOMINATION_SHARE)
+	# A fresh game already gives each faction two anchor cities.
 	var to_assign := maxi(
-		needed - game.map_state.controlled_province_count(Balance.Faction.HUMANS), 0
+		needed - game.map_state.city_count(Balance.Faction.HUMANS), 0
 	)
 	var assigned := 0
 	for province in game.map_state.provinces:
 		if assigned >= to_assign:
 			break
-		if not province.is_impassable and not province.is_owned_by(Balance.Faction.HUMANS):
+		if province.is_city and not province.is_owned_by(Balance.Faction.HUMANS):
 			province.owner_faction = Balance.Faction.HUMANS
 			assigned += 1
 
@@ -68,7 +68,7 @@ func _run() -> void:
 	# Dropping below the share clears the counter immediately.
 	var first: ProvinceData = null
 	for province in game.map_state.provinces:
-		if province.owner_faction == Balance.Faction.HUMANS:
+		if province.is_city and province.owner_faction == Balance.Faction.HUMANS:
 			first = province
 			break
 	if first == null:
@@ -90,8 +90,8 @@ func _run() -> void:
 		_fail("could not read test save: %s" % str(result.get("reason", "")))
 		return
 	var data: Dictionary = result["data"]
-	if int(data.get("version", 0)) != 8:
-		_fail("expected save version 8")
+	if int(data.get("version", 0)) != 9:
+		_fail("expected save version 9")
 		return
 	var factions: Dictionary = data.get("factions", {})
 	if int(Dictionary(factions.get("0", {}))["domination_streak"]) != 2:
@@ -102,9 +102,10 @@ func _run() -> void:
 		_fail("streak was not restored")
 		return
 
-	# v7 migration injects a zeroed streak and refuses v6 worlds.
+	# v8 migration injects NORMAL difficulty and a zeroed city streak; v7
+	# chains through it, and v6 worlds are still refused.
 	var legacy := {
-		"version": 7,
+		"version": 8,
 		"map_seed": TEST_SEED,
 		"world_scale": 1.0,
 		"turn_number": 3,
@@ -112,13 +113,16 @@ func _run() -> void:
 		"provinces": [],
 	}
 	var migrated: Dictionary = SaveSystem._migrate(legacy)
-	if int(migrated.get("version", 0)) != 8:
-		_fail("v7 save was not migrated to v8")
+	if int(migrated.get("version", 0)) != 9:
+		_fail("v8 save was not migrated to v9")
+		return
+	if int(migrated.get("difficulty", -1)) != Balance.Difficulty.NORMAL:
+		_fail("v8 save did not get NORMAL difficulty")
 		return
 	var old_factions: Dictionary = migrated.get("factions", {})
 	for key in old_factions.keys():
 		if int(Dictionary(old_factions[key]).get("domination_streak", -1)) != 0:
-			_fail("v7 faction %s did not get a zeroed streak" % str(key))
+			_fail("v8 faction %s did not get a zeroed streak" % str(key))
 			return
 	legacy["version"] = 6
 	if not SaveSystem._migrate(legacy).is_empty():
@@ -126,7 +130,7 @@ func _run() -> void:
 		return
 
 	_restore_save()
-	print("[domination] OK: streak, victory, v8 round-trip and v7 migration")
+	print("[domination] OK: city streak, victory, v9 round-trip and v8 migration")
 	quit(0)
 
 

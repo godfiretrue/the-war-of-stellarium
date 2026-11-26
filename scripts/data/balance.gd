@@ -15,8 +15,46 @@ enum Faction { NEUTRAL = -1, HUMANS = 0, ELVES = 1 }
 ## Existing values are kept so saved integers keep their meaning. HIGHLANDS is
 ## the defensive fifth biome: high, rocky ground that is still passable.
 enum Terrain { PLAINS = 0, MOUNTAINS = 1, FOREST = 2, COAST = 3, HIGHLANDS = 4 }
+## New-game difficulty. NORMAL reproduces the measured balance baseline; the
+## other levels only change the player's starting kit and the bot's strength.
+enum Difficulty { EASY = 0, NORMAL = 1, HARD = 2 }
 
 const PLAYER_FACTION := Faction.HUMANS
+
+const DIFFICULTY_NAMES := {
+	Difficulty.EASY: "Easy",
+	Difficulty.NORMAL: "Normal",
+	Difficulty.HARD: "Hard",
+}
+
+## Multipliers and additive margins read by GameState and BotController. Keep
+## NORMAL neutral so balance measurements stay comparable across difficulty.
+const DIFFICULTY_MODIFIERS := {
+	Difficulty.EASY: {
+		"player_start_gold": 1.25,
+		"player_start_manpower": 1.25,
+		"bot_recruit": 0.75,
+		"bot_battle": 0.75,
+		"bot_attack_margin": 0.25,
+		"bot_ambush": 0.5,
+	},
+	Difficulty.NORMAL: {
+		"player_start_gold": 1.0,
+		"player_start_manpower": 1.0,
+		"bot_recruit": 1.0,
+		"bot_battle": 1.0,
+		"bot_attack_margin": 0.0,
+		"bot_ambush": 1.0,
+	},
+	Difficulty.HARD: {
+		"player_start_gold": 1.0,
+		"player_start_manpower": 1.0,
+		"bot_recruit": 1.25,
+		"bot_battle": 1.25,
+		"bot_attack_margin": -0.15,
+		"bot_ambush": 1.5,
+	},
+}
 
 const FACTION_NAMES := {
 	Faction.NEUTRAL: "Neutral",
@@ -69,16 +107,18 @@ const STARTING_MANPOWER := 24
 ## ~5.5 manpower, close to the old flat 15/5 so the measured balance stays
 ## comparable. Coast still leads on gold, plains on manpower, and mountains sit
 ## in between with the best defence.
+## Cities and fortresses carry the whole economy now, so their yields are
+## roughly twice the old per-province values. Wildlands produce nothing.
 const TERRAIN_INCOME := {
-	Terrain.PLAINS: {"gold": 13, "manpower": 10},
-	Terrain.FOREST: {"gold": 12, "manpower": 6},
-	Terrain.COAST: {"gold": 20, "manpower": 2},
-	Terrain.MOUNTAINS: {"gold": 19, "manpower": 4},
-	Terrain.HIGHLANDS: {"gold": 14, "manpower": 5},
+	Terrain.PLAINS: {"gold": 27, "manpower": 20},
+	Terrain.FOREST: {"gold": 25, "manpower": 12},
+	Terrain.COAST: {"gold": 42, "manpower": 4},
+	Terrain.MOUNTAINS: {"gold": 40, "manpower": 8},
+	Terrain.HIGHLANDS: {"gold": 29, "manpower": 10},
 }
 
-const CAPITAL_GOLD_BONUS := 8
-const CAPITAL_MANPOWER_BONUS := 2
+const CAPITAL_GOLD_BONUS := 16
+const CAPITAL_MANPOWER_BONUS := 4
 const FACTION_RESOURCE_PER_TURN := 2
 
 # --- Fortresses ----------------------------------------------------------
@@ -102,6 +142,10 @@ const AMBUSH_TERRAINS := [Terrain.HIGHLANDS, Terrain.MOUNTAINS, Terrain.FOREST]
 ## consecutive resolution steps. Impassable peaks never count towards it.
 const DOMINATION_SHARE := 0.70
 const DOMINATION_STREAK := 3
+## If no city changes hands for this many resolutions, the war is decided by
+## city count (then garrison strength). Long campaigns are allowed; frozen
+## fronts are not.
+const STALEMATE_TURNS := 150
 
 ## Reverse-engineered from the elevation field at generation time. Peaks are
 ## the highest few mountain provinces: they become impassable and their graph
@@ -342,6 +386,15 @@ const GARRISON_CAPITAL := 3
 
 static func faction_name(faction: int) -> String:
 	return String(FACTION_NAMES.get(faction, "Neutral"))
+
+
+static func difficulty_name(difficulty: int) -> String:
+	return String(DIFFICULTY_NAMES.get(difficulty, "Normal"))
+
+
+static func difficulty_modifier(difficulty: int, key: String, fallback: float) -> float:
+	var table: Dictionary = DIFFICULTY_MODIFIERS.get(difficulty, {})
+	return float(table.get(key, fallback))
 
 
 static func terrain_name(terrain: int) -> String:

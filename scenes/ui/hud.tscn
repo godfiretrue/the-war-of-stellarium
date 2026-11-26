@@ -172,6 +172,15 @@ theme_override_colors/font_color = Color(0.62, 0.66, 0.78, 1)
 theme_override_font_sizes/font_size = 11
 text = "Domínio 0% · 0/3"
 
+[node name="Difficulty" type="Label" parent="Root/TopBar/TopMargin/TopRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.62, 0.66, 0.78, 1)
+theme_override_font_sizes/font_size = 11
+text = "Dificuldade: Normal"
+
 [node name="TurnBadge" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow"]
 layout_mode = 2
 size_flags_vertical = 4
