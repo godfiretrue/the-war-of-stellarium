@@ -119,6 +119,9 @@ func refresh() -> void:
 	elif data.is_city:
 		_name_label.add_theme_color_override("font_color", Color(0.96, 0.98, 1.0))
 		_name_label.add_theme_font_size_override("font_size", 12)
+	elif data.is_wildland():
+		_name_label.add_theme_color_override("font_color", UiStyle.TEXT_DIM)
+		_name_label.add_theme_font_size_override("font_size", 11)
 	else:
 		_name_label.add_theme_color_override("font_color", Color(0.88, 0.91, 0.95))
 		_name_label.add_theme_font_size_override("font_size", 11)
@@ -318,12 +321,16 @@ func _on_visuals_draw() -> void:
 			_draw_fortress_icon()
 		else:
 			_draw_town_icon()
+	elif data.is_wildland():
+		_draw_wildland_icon()
 	elif data.terrain == Balance.Terrain.HIGHLANDS:
 		_draw_highland_icon()
 	else:
 		_draw_waypoint_icon()
 
-	if data.total_troops() > 0:
+	# A wildland can hold an army on the march, but it has no garrison of its
+	# own and therefore never shows a garrison badge.
+	if data.total_troops() > 0 and not data.is_wildland():
 		_draw_army_shield()
 
 
@@ -385,6 +392,15 @@ func _draw_waypoint_icon() -> void:
 	])
 	_visuals.draw_polyline(diamond, Color(0.02, 0.04, 0.06, 0.8), 3.0, true)
 	_visuals.draw_polyline(diamond, Color(0.93, 0.95, 0.98, 0.9), 1.4, true)
+
+
+## Wildland: a faint open circle instead of a settlement or garrison badge.
+## It reads as ground you can cross rather than a place you can hold.
+func _draw_wildland_icon() -> void:
+	var center := Vector2(0, -14)
+	_visuals.draw_arc(center, 4.6, 0.0, TAU, 18, UiStyle.WILDLAND, 1.3, true)
+	_visuals.draw_circle(center + Vector2(-7.5, 0), 1.0, UiStyle.WILDLAND)
+	_visuals.draw_circle(center + Vector2(7.5, 0), 1.0, UiStyle.WILDLAND)
 
 
 ## Defensive high ground: a small crenellated ridge, distinct from a waypoint.

@@ -7,7 +7,7 @@ extends RefCounted
 ## mid-write cannot corrupt an existing game.
 
 const SAVE_PATH := "user://savegame.json"
-const VERSION := 8
+const VERSION := 9
 
 
 static func has_save() -> bool:
@@ -32,6 +32,8 @@ static func save_game(game: GameState, turn_number: int) -> bool:
 		"version": VERSION,
 		"map_seed": game.map_state.map_seed,
 		"world_scale": game.map_state.world_scale,
+		"difficulty": game.difficulty,
+		"turns_since_capture": game.turns_since_capture,
 		"turn_number": turn_number,
 		"factions": _serialize_factions(game),
 		"provinces": _serialize_provinces(game.map_state),
@@ -69,7 +71,8 @@ static func load_game(game: GameState) -> Dictionary:
 
 	var data: Dictionary = result["data"]
 	game.start_new_game(int(data.get("map_seed", 0)),
-			float(data.get("world_scale", MapFactory.DEFAULT_WORLD_SCALE)))
+			float(data.get("world_scale", MapFactory.DEFAULT_WORLD_SCALE)),
+			int(data.get("difficulty", Balance.Difficulty.NORMAL)))
 	apply_save(game, data)
 	return {"ok": true, "turn": int(data.get("turn_number", 1))}
 
@@ -103,8 +106,10 @@ static func read_save() -> Dictionary:
 static func apply_save(game: GameState, data: Dictionary) -> void:
 	if game == null:
 		return
+	game.turns_since_capture = int(data.get("turns_since_capture", 0))
 	_apply_factions(game, data.get("factions", {}))
 	_apply_provinces(game, data.get("provinces", []))
+	_reconcile_wildlands(game)
 	game.update_all_visibility()
 	game.state_changed.emit()
 
@@ -126,6 +131,22 @@ static func _migrate(raw: Dictionary) -> Dictionary:
 			var entry: Dictionary = factions[key]
 			entry["domination_streak"] = 0
 			factions[key] = entry
+		raw["version"] = 8
+		version = 8
+	# Version 8 predates wildlands and city-based victory. The old streak
+	# counted land, so it cannot carry over, and the new-game difficulty did
+	# not exist yet. Wildland home guards are cleaned up when the save is
+	# applied to a freshly generated map.
+	if version == 8:
+		if not raw.has("difficulty"):
+			raw["difficulty"] = Balance.Difficulty.NORMAL
+		if not raw.has("turns_since_capture"):
+			raw["turns_since_capture"] = 0
+		var old_factions: Dictionary = raw.get("factions", {})
+		for key in old_factions.keys():
+			var entry: Dictionary = old_factions[key]
+			entry["domination_streak"] = 0
+			old_factions[key] = entry
 		raw["version"] = VERSION
 		return raw
 	# Version 6 predates Highlands, impassable peaks and fog of war. Worldgen
@@ -203,3 +224,21 @@ static func _apply_provinces(game: GameState, provinces: Array) -> void:
 		var garrison: Dictionary = entry.get("garrison", {})
 		for unit_id: String in garrison.keys():
 			province.add_units(unit_id, int(garrison[unit_id]))
+
+
+## Wildland owners are derived, not authored: a save only needs city owners.
+## Rebuild them from the influencing city so an older or edited save cannot
+## leave militia or unrest in a corridor.
+static func _reconcile_wildlands(game: GameState) -> void:
+	if game.map_state == null:
+		return
+	for province in game.map_state.provinces:
+		if not province.is_wildland():
+			continue
+		province.home_guard = 0
+		province.unrest_turns = 0
+		var city := game.map_state.get_province(province.influence_city_id)
+		province.owner_faction = (
+			city.owner_faction if city != null and city.is_city
+			else Balance.Faction.NEUTRAL
+		)

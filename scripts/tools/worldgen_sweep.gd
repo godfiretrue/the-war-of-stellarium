@@ -77,6 +77,13 @@ func _initialize() -> void:
 				failures.append("%s: %s is a fortress but not a city" % [context, province.id])
 			if province.is_city:
 				cities += 1
+			if province.is_wildland():
+				if province.home_guard != 0:
+					failures.append("%s: wildland %s holds home guard" % [context, province.id])
+				if not state.has_province(province.influence_city_id):
+					failures.append("%s: wildland %s has no influence city" % [context, province.id])
+			elif province.home_guard_cap() <= 0:
+				failures.append("%s: city %s has no militia cap" % [context, province.id])
 			if province.is_impassable:
 				peaks += 1
 				if province.neighbors.size() > 0:

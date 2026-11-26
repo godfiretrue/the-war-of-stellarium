@@ -66,7 +66,17 @@ func _run() -> void:
 		_fail("march mode did not open")
 		return
 
-	var target_id := String(capital.neighbors[0])
+	# A wildland has no defence, so its forecast is the single "free capture"
+	# line rather than a power band. Use a held neighbour to test the band.
+	var target_id := ""
+	for neighbor_id: String in capital.neighbors:
+		var neighbor := game.map_state.get_province(neighbor_id)
+		if neighbor != null and not neighbor.is_wildland():
+			target_id = neighbor_id
+			break
+	if target_id.is_empty():
+		_fail("capital has no defended neighbour")
+		return
 	hud._on_map_hover(target_id)
 	if not hud._preview_card.visible:
 		_fail("preview did not appear for a neighbour")

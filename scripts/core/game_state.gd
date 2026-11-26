@@ -13,6 +13,9 @@ signal orders_changed
 signal battle_resolved(result: Dictionary)
 
 var map_state: MapState
+## Chosen in the new-game menu and restored from saves. NORMAL is the measured
+## baseline; the other levels only tune the player's kit and the bot.
+var difficulty: int = Balance.Difficulty.NORMAL
 var gold: Dictionary = {}
 var manpower: Dictionary = {}
 var faction_resources: Dictionary = {}
@@ -25,6 +28,10 @@ var capital_penalty: Dictionary = {}
 ## faction -> consecutive resolution steps above DOMINATION_SHARE. The turn
 ## manager reads this after each resolution; only the model owns the counter.
 var domination_streak: Dictionary = {}
+
+## Resolutions since the last city changed hands. A long, hard-fought front is
+## fine; a permanently frozen one is settled by the stalemate rule.
+var turns_since_capture: int = 0
 
 ## faction -> {province_id: true}. Terrain the faction has ever seen; it stays
 ## drawn after the army moves on, but live troop counts only come from the
@@ -57,11 +64,11 @@ func is_province_visible(faction: int, province_id: String) -> bool:
 	var province := map_state.get_province(province_id)
 	if province == null:
 		return false
-	if province.is_owned_by(faction):
+	if province.is_owned_by(faction) or province.has_troops_of(faction):
 		return true
 	var adjacent := false
 	for neighbor in map_state.neighbors_of(province_id):
-		if neighbor.is_owned_by(faction):
+		if neighbor.is_owned_by(faction) or neighbor.has_troops_of(faction):
 			adjacent = true
 			break
 	if not adjacent:
@@ -92,10 +99,10 @@ func update_all_visibility() -> void:
 
 
 func _geometrically_visible(faction: int, province: ProvinceData) -> bool:
-	if province.is_owned_by(faction):
+	if province.is_owned_by(faction) or province.has_troops_of(faction):
 		return true
 	for neighbor in map_state.neighbors_of(province.id):
-		if neighbor.is_owned_by(faction):
+		if neighbor.is_owned_by(faction) or neighbor.has_troops_of(faction):
 			return true
 	return false
 
@@ -128,13 +135,21 @@ func visible_defense_power(faction: int, province: ProvinceData) -> float:
 
 ## Pass a seed to rebuild a specific world (used when loading a save);
 ## a negative seed rolls a new random continent.
-func start_new_game(map_seed: int = -1, world_scale: float = MapFactory.DEFAULT_WORLD_SCALE) -> void:
-	start_new_game_from_map(MapFactory.create_default_map(map_seed, world_scale))
+func start_new_game(
+	map_seed: int = -1,
+	world_scale: float = MapFactory.DEFAULT_WORLD_SCALE,
+	game_difficulty: int = Balance.Difficulty.NORMAL,
+) -> void:
+	start_new_game_from_map(MapFactory.create_default_map(map_seed, world_scale), game_difficulty)
 
 
 ## Starts a game from an already generated and finalized map. The loading
 ## screen generates the map on a worker thread and then hands it over here.
-func start_new_game_from_map(state: MapState) -> void:
+func start_new_game_from_map(
+	state: MapState,
+	game_difficulty: int = Balance.Difficulty.NORMAL,
+) -> void:
+	difficulty = game_difficulty
 	map_state = state
 	gold.clear()
 	manpower.clear()
@@ -144,10 +159,21 @@ func start_new_game_from_map(state: MapState) -> void:
 	capital_penalty.clear()
 	explored.clear()
 	domination_streak.clear()
+	turns_since_capture = 0
 
+	var gold_modifier := Balance.difficulty_modifier(
+		difficulty, "player_start_gold", 1.0
+	)
+	var manpower_modifier := Balance.difficulty_modifier(
+		difficulty, "player_start_manpower", 1.0
+	)
 	for faction: int in factions():
-		gold[faction] = Balance.STARTING_GOLD
-		manpower[faction] = Balance.STARTING_MANPOWER
+		# Only the player's kit changes with difficulty; the bot's edge comes
+		# from its planning caps in BotController.
+		var kit := gold_modifier if faction == Balance.PLAYER_FACTION else 1.0
+		var labour := manpower_modifier if faction == Balance.PLAYER_FACTION else 1.0
+		gold[faction] = int(round(float(Balance.STARTING_GOLD) * kit))
+		manpower[faction] = int(round(float(Balance.STARTING_MANPOWER) * labour))
 		faction_resources[faction] = {"aether": 0, "iron": 0}
 		queued_orders[faction] = []
 		explored[faction] = {}
@@ -215,7 +241,7 @@ func income_for(faction: int) -> Dictionary:
 
 	if map_state != null:
 		for province in map_state.provinces_owned_by(faction):
-			if province.unrest_turns > 0:
+			if province.unrest_turns > 0 or province.is_wildland():
 				continue
 			var base := province.base_income()
 			gold_income += int(base["gold"])
@@ -323,6 +349,34 @@ func advance_domination_tracking() -> void:
 			domination_streak[faction] = 0
 
 
+## Breaks a permanently frozen front after a long run with no city captured.
+## City count decides; garrison strength breaks an exact tie.
+func stalemate_winner() -> int:
+	if map_state == null or turns_since_capture < Balance.STALEMATE_TURNS:
+		return Balance.Faction.NEUTRAL
+	var humans := map_state.city_count(Balance.Faction.HUMANS)
+	var elves := map_state.city_count(Balance.Faction.ELVES)
+	if humans != elves:
+		return Balance.Faction.HUMANS if humans > elves else Balance.Faction.ELVES
+	var human_troops := 0
+	var elf_troops := 0
+	for province in map_state.provinces:
+		human_troops += _troops_of(province, Balance.Faction.HUMANS)
+		elf_troops += _troops_of(province, Balance.Faction.ELVES)
+	if human_troops != elf_troops:
+		return Balance.Faction.HUMANS if human_troops > elf_troops else Balance.Faction.ELVES
+	return Balance.Faction.NEUTRAL
+
+
+func _troops_of(province: ProvinceData, faction: int) -> int:
+	var total := 0
+	for unit_id: String in province.garrison.keys():
+		var unit := UnitCatalog.get_unit(unit_id)
+		if unit != null and unit.faction == faction:
+			total += int(province.garrison[unit_id])
+	return total
+
+
 func domination_progress(faction: int) -> Dictionary:
 	return {
 		"share": 0.0 if map_state == null else map_state.domination_share(faction),
@@ -346,7 +400,7 @@ func regen_home_guards() -> void:
 	if map_state == null:
 		return
 	for province in map_state.provinces:
-		if not Balance.HOME_GUARD_ENABLED:
+		if not Balance.HOME_GUARD_ENABLED or province.is_wildland():
 			province.home_guard = 0
 			continue
 		# Neutral fortresses keep the initial levy MapFactory gave them; other
@@ -363,6 +417,22 @@ func regen_home_guards() -> void:
 
 ## Starts the temporary penalty for a faction whose capital changed hands.
 ## Called once per resolution, after the final owners are written.
+## Wildlands are not independently owned: each one follows its nearest city.
+## A city capture therefore flips its whole hinterland bloodlessly and in one
+## resolution step, regardless of the order destinations were resolved in.
+func _propagate_influence(final_owner: Dictionary) -> void:
+	if map_state == null:
+		return
+	for province in map_state.provinces:
+		if not province.is_wildland():
+			continue
+		var city := map_state.get_province(province.influence_city_id)
+		if city == null or city.is_wildland():
+			final_owner[province.id] = Balance.Faction.NEUTRAL
+		else:
+			final_owner[province.id] = int(final_owner.get(city.id, Balance.Faction.NEUTRAL))
+
+
 func _apply_capital_losses(snapshot: Dictionary) -> void:
 	if not Balance.CAPITAL_PENALTY_ENABLED:
 		return
@@ -391,6 +461,10 @@ func _apply_conquest_unrest(snapshot: Dictionary) -> void:
 	if not Balance.CONQUEST_UNREST_ENABLED:
 		return
 	for province in map_state.provinces:
+		# Wildlands flip with their city but never pay for it: no unrest.
+		if province.is_wildland():
+			province.unrest_turns = 0
+			continue
 		if int(snapshot[province.id]["owner"]) == province.owner_faction:
 			continue
 		province.unrest_turns = Balance.CONQUEST_UNREST_TURNS
@@ -433,7 +507,11 @@ func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary)
 	var target := map_state.get_province(to_id)
 	if origin == null or target == null:
 		return _fail("unknown province")
-	if not origin.is_owned_by(faction):
+	# An army that has marched into a wildland may keep marching even when that
+	# corridor follows a city held by someone else. It still owns no ground and
+	# cannot recruit or defend there.
+	if not origin.is_owned_by(faction) \
+			and not (origin.is_wildland() and origin.has_troops_of(faction)):
 		return _fail("%s is not yours" % origin.display_name)
 	if _has_queued_ambush(faction, from_id):
 		return _fail("%s already has an ambush order this turn" % origin.display_name)
@@ -939,6 +1017,14 @@ func resolve_turn(turn_number: int = 1) -> Dictionary:
 		province.home_guard = int(final_home_guard.get(province.id, 0))
 		province.ambush = bool(final_ambush.get(province.id, false))
 
+	if summary["captures"].is_empty():
+		turns_since_capture += 1
+	else:
+		turns_since_capture = 0
+
+	# Wildland owners mirror their influencing city, so this runs only after
+	# every destination has been written to final_owner.
+	_propagate_influence(final_owner)
 	_apply_capital_losses(snapshot)
 	_apply_conquest_unrest(snapshot)
 	# Flares and hidden garrisons change with the board, so recompute what each
@@ -975,6 +1061,74 @@ func _resolve_destination(
 			orders_by_faction[faction] = []
 		_merge_units(incoming[faction], entry["units"])
 		orders_by_faction[faction].append(entry)
+
+	# Wildlands are corridors: ownership follows the influencing city and is
+	# written once every capture is known (see _propagate_influence). Armies
+	# simply merge, except an ambush hidden here springs on the first arrival.
+	var destination := map_state.get_province(target_id)
+	if destination != null and destination.is_wildland():
+		var ambusher := _ambush_faction(station[target_id])
+		var ambush_active := bool(final_ambush.get(target_id, false)) \
+				and ambusher != Balance.Faction.NEUTRAL
+		var hostile: Dictionary = {}
+		for faction: int in incoming.keys():
+			if faction != ambusher:
+				hostile[faction] = incoming[faction]
+		if ambush_active and not hostile.is_empty():
+			var attacker_faction: int = int(hostile.keys()[0])
+			if hostile.size() > 1:
+				var choices: Array = hostile.keys()
+				_shuffle(choices, rng)
+				attacker_faction = int(choices[0])
+			# Throwaway plains province: the wildland itself is never captured.
+			var trap := ProvinceData.new()
+			trap.id = target_id
+			trap.display_name = destination.display_name
+			trap.terrain = Balance.Terrain.PLAINS
+			trap.is_city = true
+			trap.owner_faction = ambusher
+			trap.garrison = (station[target_id] as Dictionary).duplicate(true)
+			trap.ambush = true
+			var result := CombatResolver.resolve(
+				(hostile[attacker_faction] as Dictionary).duplicate(true),
+				trap, attacker_faction, rng
+			)
+			result["field"] = true
+			result["ambush"] = true
+			result["swap"] = false
+			result["captured"] = false
+			result["province_id"] = target_id
+			result["province_name"] = destination.display_name
+			result["from_id"] = _first_origin(orders_by_faction.get(attacker_faction, []))
+			result["to_id"] = target_id
+			result["from_name"] = _province_name(String(result["from_id"]))
+			result["to_name"] = destination.display_name
+			summary["battles"].append(result)
+			last_battle = result
+			battle_resolved.emit(result)
+			_log("[battle] ambush in %s: losses %d/%d, corridor stays unconquered" % [
+				destination.display_name, int(result["attacker_losses"]),
+				int(result["defender_losses"]),
+			])
+			_pending_returns(
+				result["attacker_survivors"],
+				orders_by_faction.get(attacker_faction, []), attacker_faction,
+				pending_returns, rng
+			)
+			var survivors: Dictionary = trap.garrison.duplicate(true)
+			if incoming.has(ambusher):
+				_merge_units(survivors, incoming[ambusher])
+			final_garrison[target_id] = survivors
+			final_home_guard[target_id] = 0
+			final_ambush[target_id] = false
+			return
+		var passing: Dictionary = (final_garrison.get(target_id, {}) as Dictionary).duplicate(true)
+		for faction: int in incoming.keys():
+			_merge_units(passing, incoming[faction])
+		final_garrison[target_id] = passing
+		final_home_guard[target_id] = 0
+		final_ambush[target_id] = false
+		return
 
 	# Defence is the snapshot station plus any friendly reinforcement arriving
 	# this turn (rule 3c), plus the home guard that never leaves.
@@ -1280,8 +1434,29 @@ func _pending_returns(
 
 
 func _is_hostile_move(entry: Dictionary, snapshot: Dictionary) -> bool:
+	var target := map_state.get_province(String(entry["to"])) if map_state != null else null
+	# Nobody fights over a corridor, even when its influencing city is hostile.
+	if target != null and target.is_wildland():
+		return false
 	var target_owner := int(snapshot[String(entry["to"])]["owner"])
 	return target_owner != int(entry["faction"]) and target_owner != Balance.Faction.NEUTRAL
+
+
+## Faction whose units make up an army hidden in an ambush. Ties resolve by
+## faction id, which only matters for saves with mixed garrisons in a corridor.
+func _ambush_faction(garrison: Dictionary) -> int:
+	var best := Balance.Faction.NEUTRAL
+	var best_count := 0
+	for faction: int in factions():
+		var count := 0
+		for unit_id: String in garrison.keys():
+			var unit := UnitCatalog.get_unit(unit_id)
+			if unit != null and unit.faction == faction:
+				count += int(garrison[unit_id])
+		if count > best_count:
+			best = faction
+			best_count = count
+	return best
 
 
 func _merge_units(into: Dictionary, from: Dictionary) -> void:

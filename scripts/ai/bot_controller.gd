@@ -37,7 +37,9 @@ const BASE_RECRUITS_PER_TURN := 3
 const MAX_RECRUITS_PER_TURN := 18
 const BASE_BATTLES_PER_TURN := 6
 const MAX_BATTLES_PER_TURN := 40
-const REFERENCE_PROVINCES := 21
+## The reference map has 10 cities (six anchors plus four towns). Caps scale
+## with city count, because wildlands are corridors rather than holdings.
+const REFERENCE_CITIES := 10
 const CAP_EXPONENT := 0.9
 const ATTACK_SAFETY_MARGIN := 1.0
 const IMPATIENCE_ROUNDS := 3
@@ -150,7 +152,7 @@ func recruit_phase() -> void:
 	# behaviour the balance table was measured with. Larger maps spread the
 	# same per-turn budget over several cities so reinforcements reach distant
 	# fronts instead of marching from the capital.
-	if game.map_state.province_count() <= REFERENCE_PROVINCES:
+	if game.map_state.city_count_total() <= REFERENCE_CITIES:
 		_recruit_at_capital(unit_ids)
 		return
 
@@ -182,11 +184,16 @@ func recruit_phase() -> void:
 func ambush_phase() -> void:
 	if game == null or game.map_state == null or stalemate_rounds < 1:
 		return
-	var cap: int = doctrine().ambush_cap if stalemate_rounds < IMPATIENCE_ROUNDS else doctrine().ambush_cap + 1
+	var aggression: float = Balance.difficulty_modifier(game.difficulty, "bot_ambush", 1.0)
+	var base_cap: int = doctrine().ambush_cap if stalemate_rounds < IMPATIENCE_ROUNDS \
+			else doctrine().ambush_cap + 1
+	var cap: int = int(round(float(base_cap) * aggression))
 	var placed := 0
-	for province in game.map_state.provinces_owned_by(bot_faction):
+	for province in _stacks():
 		if placed >= cap:
 			break
+		# Wildlands are the best place to wait: an enemy marching through does
+		# not expect an army in ground that cannot defend itself.
 		if not province.can_ambush() or not _borders_enemy(province):
 			continue
 		if game.has_move_order(bot_faction, province.id):
@@ -274,28 +281,27 @@ func _nearest_enemy_province() -> ProvinceData:
 	return null
 
 
-## Caps grow sublinearly with the world's area. Linear growth gave twelve
-## recruits on the 84-province map and a 90/10 Human snowball; sqrt gave six
-## and a 0/20 Elve sweep. The exponent in between keeps both factions' unit
-## costs and incomes relevant on every map size.
+## Caps grow sublinearly with the number of cities. Linear growth snowballed
+## on the large map; sqrt starved the fronts. The exponent in between keeps
+## both factions' unit costs and incomes relevant on every map size.
 func _recruit_cap() -> int:
-	return _scaled_cap(BASE_RECRUITS_PER_TURN, MAX_RECRUITS_PER_TURN)
+	return _scaled_cap(BASE_RECRUITS_PER_TURN, MAX_RECRUITS_PER_TURN, "bot_recruit")
 
 
 func _battle_cap() -> int:
-	return _scaled_cap(BASE_BATTLES_PER_TURN, MAX_BATTLES_PER_TURN)
+	return _scaled_cap(BASE_BATTLES_PER_TURN, MAX_BATTLES_PER_TURN, "bot_battle")
 
 
-## The ideal cap is rarely a whole number (10.4 recruits on an 84-province
-## map). Rounding it up every turn gave a Human snowball, rounding it down
-## gave an Elve sweep, so grant the extra slot only on part of the turn cycle.
-## On the 21-province reference map the ideal cap is already an integer, so
-## this changes nothing there.
-func _scaled_cap(base: int, limit: int) -> int:
+## The ideal cap is rarely a whole number. Rounding it up every turn gave a
+## Human snowball, rounding it down gave an Elve sweep, so grant the extra slot
+## only on part of the turn cycle. On the reference map the ideal cap is an
+## integer, so this changes nothing in the baseline balance run.
+func _scaled_cap(base: int, limit: int, modifier_key: String) -> int:
+	var cities := maxi(1, game.map_state.city_count_total())
 	var exact := float(base) * pow(
-		float(game.map_state.province_count()) / float(REFERENCE_PROVINCES),
-		CAP_EXPONENT
+		float(cities) / float(REFERENCE_CITIES), CAP_EXPONENT
 	)
+	exact *= Balance.difficulty_modifier(game.difficulty, modifier_key, 1.0)
 	var cap := int(floor(exact))
 	var turn := int(turn_manager.turn_number) if turn_manager != null else 0
 	if exact - float(cap) > 0.0 and (turn % 5 == 1 or turn % 5 == 3):
@@ -347,10 +353,21 @@ func attack_phase() -> int:
 ## Queues at most one attack per owned province. A province that already has a
 ## march order is skipped, which is the bot's copy of the player's "one attack
 ## order per province" rule.
+## Holdings plus wildlands where this faction has an army on the march.
+func _stacks() -> Array[ProvinceData]:
+	var result: Array[ProvinceData] = []
+	for province in game.map_state.provinces:
+		if province.is_owned_by(bot_faction) or (
+				province.is_wildland() and province.has_troops_of(bot_faction)
+			):
+			result.append(province)
+	return result
+
+
 func _execute_attacks(ignore_odds: bool) -> int:
 	var battles := 0
 	var battle_cap := _battle_cap()
-	for province in game.map_state.provinces_owned_by(bot_faction):
+	for province in _stacks():
 		if battles >= battle_cap:
 			break
 		if province.total_troops() <= 0:
@@ -382,15 +399,18 @@ func best_attack_target(
 	var attack := _units_attack_power(sending)
 
 	for target in game.map_state.neighbors_of(province.id):
-		if target.is_owned_by(bot_faction):
+		if target.is_owned_by(bot_faction) or target.is_wildland():
 			continue
-		# Fog of war: judge the odds on what the bot can actually see. An
-		# ambushing garrison reads as empty, so walking into one is a real risk.
+		# Wildlands never fight, so spending an attack order on one is wasted.
+		# Fog of war still applies to the cities and fortresses worth taking.
 		if game.visible_troops(bot_faction, target) <= 0:
 			continue
 		var defense := maxf(game.visible_defense_power(bot_faction, target), 1.0)
 		var ratio := attack / defense
 		var margin: float = doctrine().attack_margin
+		margin += Balance.difficulty_modifier(
+			game.difficulty, "bot_attack_margin", 0.0
+		)
 		if target.is_fortress or target.terrain == Balance.Terrain.HIGHLANDS:
 			margin += doctrine().fortress_margin_bonus
 		if not ignore_odds and ratio < margin:
@@ -414,7 +434,7 @@ func advance_phase() -> void:
 	var enemy_capital := game.map_state.capital_of(enemy_faction)
 	var use_capital := enemy_capital != null and enemy_capital.is_owned_by(enemy_faction)
 
-	for province in game.map_state.provinces_owned_by(bot_faction):
+	for province in _stacks():
 		if province.total_troops() <= 0:
 			continue
 		if game.has_move_order(bot_faction, province.id):
@@ -451,7 +471,7 @@ func advance_phase() -> void:
 ## Takes adjacent provinces that cannot defend themselves, preferring enemy
 ## land over neutral ground. Only visible board state is read.
 func _expand_into_open_ground() -> void:
-	for province in game.map_state.provinces_owned_by(bot_faction):
+	for province in _stacks():
 		if province.total_troops() <= 0:
 			continue
 		if game.has_move_order(bot_faction, province.id):
@@ -469,17 +489,17 @@ func _expand_into_open_ground() -> void:
 
 
 func _best_open_neighbor(province: ProvinceData) -> ProvinceData:
-	var neutral: ProvinceData = null
+	var neutral_city: ProvinceData = null
 	for target in game.map_state.neighbors_of(province.id):
-		if target.is_owned_by(bot_faction):
+		if target.is_owned_by(bot_faction) or target.is_wildland():
 			continue
 		if game.visible_troops(bot_faction, target) > 0:
 			continue
 		if not target.is_neutral():
 			return target
-		if neutral == null:
-			neutral = target
-	return neutral
+		if neutral_city == null:
+			neutral_city = target
+	return neutral_city
 
 
 ## An army may enter friendly land or a province it believes undefended.
@@ -523,7 +543,7 @@ func _next_step_toward(from_id: String, goal_id: String) -> ProvinceData:
 	return _first_step(came_from, from_id, goal_id)
 
 
-## Step toward the closest province owned by the enemy.
+## Step toward the closest city owned by the enemy; wildlands are corridors.
 func _nearest_enemy_step(from_id: String) -> ProvinceData:
 	var map := game.map_state
 	var frontier: Array[String] = [from_id]
@@ -535,7 +555,8 @@ func _nearest_enemy_step(from_id: String) -> ProvinceData:
 			if came_from.has(neighbor.id):
 				continue
 			came_from[neighbor.id] = current
-			if not neighbor.is_owned_by(bot_faction) and not neighbor.is_neutral():
+			if not neighbor.is_owned_by(bot_faction) and not neighbor.is_neutral() \
+					and neighbor.is_city:
 				var step := _first_step(came_from, from_id, neighbor.id)
 				if step != null and _can_enter(step):
 					return step
@@ -544,8 +565,8 @@ func _nearest_enemy_step(from_id: String) -> ProvinceData:
 	return null
 
 
-## Nearest neutral province, walked through friendly land. Returns the first
-## step of the path, which may be a neutral province itself.
+## Nearest neutral city, walked through friendly land and wildlands. Returns
+## the first step of the path, which may itself be a wildland corridor.
 func _nearest_open_step(from_id: String) -> ProvinceData:
 	var map := game.map_state
 	var frontier: Array[String] = [from_id]
@@ -557,9 +578,14 @@ func _nearest_open_step(from_id: String) -> ProvinceData:
 			if came_from.has(neighbor.id):
 				continue
 			came_from[neighbor.id] = current
-			if neighbor.is_neutral() and game.visible_troops(bot_faction, neighbor) <= 0:
+			if neighbor.is_neutral() and neighbor.is_city \
+					and game.visible_troops(bot_faction, neighbor) <= 0:
 				return _first_step(came_from, from_id, neighbor.id)
-			if neighbor.is_owned_by(bot_faction):
+			# Wildlands are corridors: path through them to reach a city that
+			# is not adjacent to the current holding.
+			if neighbor.is_owned_by(bot_faction) or (
+					neighbor.is_neutral() and neighbor.is_wildland()
+				):
 				frontier.append(neighbor.id)
 
 	return null

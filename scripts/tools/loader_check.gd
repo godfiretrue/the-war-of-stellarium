@@ -26,7 +26,19 @@ func _run() -> void:
 		_fail("main menu did not become the current scene")
 		return
 
-	menu._on_new_game()
+	# Drive the real New Game button and setup panel, not an internal shortcut:
+	# pressing the button must open the panel, then Start must begin loading.
+	var new_game: Button = menu.get_node("%NewGame") as Button
+	var panel = menu.get_node("%NewGamePanel")
+	new_game.pressed.emit()
+	if panel == null or not panel.visible:
+		_fail("New Game did not open the setup panel")
+		return
+	panel.confirmed.emit({
+		"seed": -1,
+		"world_scale": MapFactory.DEFAULT_WORLD_SCALE,
+		"difficulty": Balance.Difficulty.NORMAL,
+	})
 
 	var deadline := Time.get_ticks_msec() + TIMEOUT_MS
 	while Time.get_ticks_msec() < deadline:

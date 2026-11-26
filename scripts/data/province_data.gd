@@ -21,6 +21,9 @@ extends Resource
 ## intelligence until an enemy army enters or the order is cancelled.
 @export var ambush: bool = false
 @export var territory_type: String = "Wilderness"
+## Wildlands have no garrison of their own: their owner follows the nearest
+## city, so capturing that city flips its hinterland without a fight.
+@export var influence_city_id: String = ""
 @export var capital_of: int = Balance.Faction.NEUTRAL
 @export var neighbors: PackedStringArray = PackedStringArray()
 @export var resource_type: String = ""
@@ -44,12 +47,19 @@ func is_neutral() -> bool:
 	return owner_faction == Balance.Faction.NEUTRAL
 
 
-## Important positions can hide a garrison: cities, fortresses, and defensive
-## ground (Highlands, mountains and forests). Peaks are unreachable anyway.
+## Only cities and fortresses are permanent holdings. Everything else is a
+## pass-through wildland: it can hold a marching army but never defends itself.
+func is_wildland() -> bool:
+	return not is_city and not is_fortress
+
+
+## Cities, fortresses and wildlands can hide a garrison. An ambush in a
+## wildland springs when an enemy marches in; the corridor itself never changes
+## hands, which makes it the most surprising place to wait.
 func is_ambush_ground() -> bool:
 	if is_impassable:
 		return false
-	return is_city or is_fortress or Balance.can_ambush_terrain(terrain)
+	return is_city or is_fortress or is_wildland()
 
 
 ## An ambush needs troops to hide and a position worth hiding them in.
@@ -61,6 +71,18 @@ func is_owned_by(faction: int) -> bool:
 	return owner_faction == faction
 
 
+## A marching army in a wildland sees the ground it stands on, even though the
+## corridor is owned by a city it has not captured.
+func has_troops_of(faction: int) -> bool:
+	for unit_id: String in garrison.keys():
+		if int(garrison[unit_id]) <= 0:
+			continue
+		var unit := UnitCatalog.get_unit(unit_id)
+		if unit != null and unit.faction == faction:
+			return true
+	return false
+
+
 func total_troops() -> int:
 	var total := 0
 	for unit_id: String in garrison.keys():
@@ -70,14 +92,16 @@ func total_troops() -> int:
 
 ## Militia cap for this province: capitals hold a larger levy.
 func home_guard_cap() -> int:
-	if not Balance.HOME_GUARD_ENABLED:
+	if not Balance.HOME_GUARD_ENABLED or is_wildland():
 		return 0
 	return Balance.HOME_GUARD_CAPITAL_MAX if is_capital else Balance.HOME_GUARD_MAX
 
 
-## Everything that defends the province: mobile garrison plus militia. Only the
-## garrison can leave, so movement rules keep using total_troops().
+## Everything that defends the province: mobile garrison plus militia. Wildlands
+## are corridors and never defend, even while an army is marching through them.
 func defence_troops() -> int:
+	if is_wildland():
+		return 0
 	if not Balance.HOME_GUARD_ENABLED:
 		return total_troops()
 	return total_troops() + maxi(home_guard, 0)
@@ -99,6 +123,8 @@ func attack_power() -> float:
 ## Base gold and manpower this province produces per turn, before the faction
 ## modifiers and the capital-loss penalty (both applied by GameState).
 func base_income() -> Dictionary:
+	if is_wildland():
+		return {"gold": 0, "manpower": 0}
 	var income := Balance.terrain_income(terrain)
 	if is_capital:
 		income["gold"] = int(income["gold"]) + Balance.CAPITAL_GOLD_BONUS
@@ -110,6 +136,8 @@ func base_income() -> Dictionary:
 ## fortress or siege modifier. Combat uses this so both sides go through the
 ## same multiplier path.
 func raw_defense_power() -> float:
+	if is_wildland():
+		return 0.0
 	var power := 0.0
 	for unit_id: String in garrison.keys():
 		var count := int(garrison[unit_id])
