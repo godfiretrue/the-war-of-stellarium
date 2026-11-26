@@ -160,7 +160,7 @@ const HIGHLANDS_MIN_MOUNTAIN_FRACTION := 0.14
 ## Per-faction economy modifiers.
 ## gold/manpower: income multipliers. recruit_cost: multiplier on recruitment price.
 const FACTION_MODIFIERS := {
-	Faction.HUMANS: {"gold": 1.0, "manpower": 1.0, "recruit_cost": 0.7},
+	Faction.HUMANS: {"gold": 1.0, "manpower": 1.0, "recruit_cost": 0.54},
 	Faction.ELVES: {"gold": 1.15, "manpower": 1.15, "recruit_cost": 1.0},
 }
 

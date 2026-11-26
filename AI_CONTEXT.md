@@ -206,7 +206,7 @@ bar, a province dock at the bottom centre and panels on the screen edges.
   from every owned city; nothing is disabled. The penalty is per faction, is
   saved, and is shown in the recruit tooltip.
 - Upkeep per army: `ceil(avg_unit_cost / 15 * troops ^ 1.2)`.
-- Humans pay 0.7x recruitment; Elves get 1.15x income.
+- Humans pay 0.54x recruitment; Elves get 1.15x income.
 - Orders are validated when queued, against the current board **and** the units
   already committed from the same origin. A province may send many friendly
   marches but at most one attack order per turn. Recruit gold/manpower are
@@ -330,11 +330,12 @@ run on the same seeds, so the effect of one rule is isolated:
 | **final:** as above, but a stalled front attacks with everything | **Humans 9, Elves 11; 45% / 55%; 116.8 turns; 0 unfinished; 0 queue failures** |
 | **terrain economy + fortresses (v0.5):** Plains 13/10, Forest 12/6, Coast 20/2, Mountains 19/4; five fortresses at 4 gold/turn | **Humans 9, Elves 11; 45% / 55%; 76.0 turns; 0 unfinished; 0 queue failures** |
 | **Highlands + peaks + fog + ambush (v0.7):** Highlands 14/5 and ×1.5 defence, up to 6 impassable peaks, 1-tile vision, hidden ambush orders | **Humans 13, Elves 7; 65% / 35%; 74.8 turns; 0 unfinished; 0 queue failures** |
+| **wildlands + city economy + new-game setup:** seed-shaped continents and ranges, wildland corridors owned through influence cities, city-based victory and the 150-turn stalemate breaker | **Humans 9, Elves 11; 45% / 55%; 87.3 turns; 0 unfinished; 0 queue failures** |
 
-Target met for game length; the win split now favours Humans by 30 points and
-is the next balance card. An earlier version of ambush froze border armies
-forever (11/20 unfinished); letting a hidden army march out of its ambush
-restored 20/20 finished games.
+The current rules meet both targets: the 45/55 reference split is restored and
+wars are long without hitting the 800-turn cap. An earlier version of ambush
+froze border armies forever (11/20 unfinished); letting a hidden army march
+out of its ambush restored 20/20 finished games.
 
 What each measurement says:
 
@@ -354,6 +355,12 @@ What each measurement says:
   normal attack, the full tier when repositioning, and committing everything
   after `IMPATIENCE_ROUNDS` without a battle lands on 45/55 with every seed
   finishing.
+- **Faction economy** is not monotonic: Elves win more at both 1.00x and 1.30x
+  income than at 1.15x, because `_affordable_unit()` buys cheaper, more
+  cost-efficient units when gold is tight and snowballs when it is abundant.
+  The 45/55 split comes from Humans' 0.54x recruit cost; nearby values swing
+  the 20-game sample (0.53x gives 50/50, 0.55x gives 40/60 Humans), so further
+  changes should wait for a wider seed sample.
 - `ATTACKER_LOSS_FACTOR` / `DEFENDER_LOSS_FACTOR` were **not** changed: the
   target was reached at 0.7/1.0, and lowering lethality would mostly lengthen
   already long wars.
