@@ -8,6 +8,8 @@ extends Node2D
 ## - castle icon in cities (recruitment hubs), small waypoint in open land
 ## - tactical shield with the troop count
 
+const FOG_SHADER := preload("res://shaders/fog.gdshader")
+
 const RADIUS := 54.0
 const SIDES := 6
 ## Below this zoom only cities keep their names; open land labels would clutter
@@ -18,6 +20,9 @@ const COLOR_BORDER := Color(0.06, 0.08, 0.12, 0.95)
 const COLOR_BORDER_SELECTED := Color(1.0, 0.86, 0.30, 1.0)
 const COLOR_BORDER_HOVER := Color(0.95, 0.98, 1.0, 1.0)
 const COLOR_BORDER_NEUTRAL := Color(0.10, 0.08, 0.06, 0.60)
+## Unscouted land keeps a faint cool outline so the map still reads as a map,
+## without revealing who owns the province.
+const COLOR_BORDER_UNKNOWN := Color(0.36, 0.42, 0.55, 0.30)
 ## Reachable neighbours while a march is armed (also drawn as routes).
 const COLOR_BORDER_MARCH := Color(1.0, 0.72, 0.22, 0.95)
 ## Soft halo layers drawn outside the selected outline. Offsetting the polygon
@@ -29,6 +34,7 @@ const COLOR_ICON_PLATE := Color(0.045, 0.060, 0.085, 0.90)
 static var _plate_box: StyleBoxFlat
 
 @onready var _fill: Polygon2D = $Fill
+@onready var _fog: Polygon2D = $Fog
 @onready var _border: Line2D = $Border
 @onready var _visuals: Node2D = $Visuals
 @onready var _name_label: Label = $Name
@@ -55,6 +61,18 @@ func setup(province: ProvinceData) -> void:
 
 	var shape: PackedVector2Array = province.polygon if province.polygon.size() >= 3 else _hexagon(RADIUS)
 	_fill.polygon = shape
+
+	# Every province owns its material because the shader's grain offset is the
+	# province's world position. The palette comes from UiStyle so fog shares
+	# the campaign's colour language.
+	_fog.polygon = shape
+	var fog_material := ShaderMaterial.new()
+	fog_material.shader = FOG_SHADER
+	fog_material.set_shader_parameter("world_origin", data.map_position)
+	fog_material.set_shader_parameter("fog_base", UiStyle.BG)
+	fog_material.set_shader_parameter("pixel_size", 4.0)
+	_fog.material = fog_material
+
 	_border.points = _closed(shape)
 	_border.joint_mode = Line2D.LINE_JOINT_ROUND
 	_border.begin_cap_mode = Line2D.LINE_CAP_ROUND
@@ -92,6 +110,7 @@ func refresh() -> void:
 		return
 
 	_fill.color = _province_color()
+	_apply_fog_state()
 
 	_name_label.text = data.display_name
 	if data.is_capital:
@@ -183,7 +202,8 @@ func set_intel(explored: bool, intel: bool) -> void:
 
 
 func _update_label_visibility() -> void:
-	if data == null or not _explored:
+	# A remembered city name would reveal intelligence the fog is hiding.
+	if data == null or not _explored or not _intel:
 		_name_label.visible = false
 		return
 	_name_label.visible = data.is_city or _view_zoom >= LABEL_ZOOM \
@@ -191,7 +211,10 @@ func _update_label_visibility() -> void:
 
 
 func _apply_border() -> void:
-	var owned := data != null and not data.is_neutral()
+	# Faction colours are intelligence: without it an owned province still gets
+	# only the faint neutral outline. Gold/white UI highlights remain, because
+	# they are player feedback (selection, hover, march) rather than map info.
+	var owned := _intel and data != null and not data.is_neutral()
 	if _selected:
 		_border.default_color = COLOR_BORDER_SELECTED
 		_border.width = 4.0
@@ -217,9 +240,21 @@ func _apply_border() -> void:
 			_border.default_color = _faction_line_color()
 			_border.width = 2.6
 		else:
-			_border.default_color = COLOR_BORDER_NEUTRAL
-			_border.width = 1.8
+			_border.default_color = COLOR_BORDER_UNKNOWN if not _intel else COLOR_BORDER_NEUTRAL
+			_border.width = 1.4 if not _intel else 1.8
 		z_index = 0
+
+
+## Three fog states: unknown land is opaque, remembered land is dithered, and
+## visible land hides the veil so the normal ownership tint reads unchanged.
+func _apply_fog_state() -> void:
+	if _fog == null or _fog.material == null:
+		return
+	var mode := 2
+	if _explored:
+		mode = 0 if _intel else 1
+	_fog.visible = mode != 0
+	(_fog.material as ShaderMaterial).set_shader_parameter("fog_mode", mode)
 
 
 func _faction_line_color() -> Color:
@@ -234,13 +269,13 @@ func _faction_line_color() -> Color:
 
 
 ## Faint ownership wash over the terrain; the border line carries the strong
-## colour. Neutral land stays untinted so its natural colours show.
+## colour. Neutral land stays untinted so its natural colours show. Fog is a
+## separate polygon, so this layer never darkens the terrain directly.
 func _province_color() -> Color:
-	# Fog first: unknown land is dark, explored-but-unseen land is merely dimmed.
-	if not _explored:
-		return Color(0.010, 0.015, 0.030, 0.92)
+	# Without live intelligence no ownership or garrison tint may leak through
+	# the remembered-terrain veil. The border still shows the explored outline.
 	if not _intel:
-		return Color(0.015, 0.020, 0.035, 0.55)
+		return Color(0.0, 0.0, 0.0, 0.0)
 	# While a march target is being chosen, everything out of reach recedes.
 	if _march_mode and not _march_target and not _selected:
 		return Color(0.010, 0.015, 0.030, 0.34)
@@ -266,7 +301,7 @@ func _on_visuals_draw() -> void:
 	if data == null or not _explored:
 		return
 
-	if data.is_impassable:
+	if data.is_impassable and _intel:
 		_draw_peak_marker()
 	if data.ambush and data.owner_faction == Balance.PLAYER_FACTION:
 		_draw_ambush_badge()

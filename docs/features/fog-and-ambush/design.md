@@ -22,6 +22,10 @@ O mapa é totalmente conhecido, mas os exércitos não: cada facção vê as sua
 | Multiplicador de baixas do atacante | 1,25 | × | `AMBUSH_ATTACKER_LOSS_MULTIPLIER` |
 | Emboscadas por turno do bot | 1–2 | ordens | apenas em stalled fronts |
 
+## Apresentação
+
+- A névoa é uma camada própria em cada província: território desconhecido é opaco com neblina suave ancorada no mundo (nenhum relevo ou pico aparece), território explorado sem inteligência é um véu denso com dither ordenado em blocos de 4 px sem tint de posse, e território visível não tem véu. A paleta vem de `UiStyle`. Sem inteligência, fronteiras de facção, nomes de cidades e marcadores de pico ficam escondidos; apenas um contorno frio mostra a forma da província, mais os realces de seleção, hover e marcha do jogador.
+
 ## Edge cases
 
 - Picos intransponíveis não têm vizinhos e nunca são explorados; ficam como terra incógnita no mapa.
