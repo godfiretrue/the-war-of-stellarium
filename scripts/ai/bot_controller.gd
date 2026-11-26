@@ -2,13 +2,19 @@ class_name BotController
 extends Node
 ## Behaviour-tree driven bot for the Elves (LimboAI).
 ##
-## The tree is built in code and mirrors the three rules of the prototype:
+## The tree is a LimboAI resource at `res://data/ai/elf_turn_bt.tres`:
 ##
 ##   Sequence "Elf turn"
 ##   ├── Recruit                     (BTRecruitTask)
+##   ├── Ambush                      (BTAmbushTask)
 ##   └── Sequence "Attack, then advance"
 ##       ├── Attack                  (BTAttackTask)
 ##       └── Advance                 (BTAdvanceTask)
+##
+## The resource is generated from build_behavior_tree() by
+## scripts/tools/build_bot_tree.gd, so the tree shape has one definition. The
+## script loads the resource at runtime and falls back to building the tree in
+## code if it is missing (headless sims create bots without a scene).
 ##
 ## The tasks only orchestrate; the decision logic stays in this class and uses
 ## the same Game.queue_recruit()/Game.queue_move() calls as the player, so the
@@ -43,16 +49,7 @@ const REFERENCE_CITIES := 10
 const CAP_EXPONENT := 0.9
 const ATTACK_SAFETY_MARGIN := 1.0
 const IMPATIENCE_ROUNDS := 3
-
-## Leaf task for the ambush phase. Duck-typed like the other tasks so this
-## inner class does not create a circular class dependency.
-class BTAmbushTask extends BTAction:
-	func _tick(_delta: float) -> int:
-		var bot := get_agent()
-		if bot == null or not bot.has_method("ambush_phase"):
-			return BT.FAILURE
-		bot.ambush_phase()
-		return BT.SUCCESS
+const BEHAVIOR_TREE_PATH := "res://data/ai/elf_turn_bt.tres"
 
 var game: GameState
 var turn_manager: Node
@@ -105,18 +102,29 @@ func play_turn() -> void:
 		total_troops(),
 	])
 
-	if _behavior_tree == null:
-		_behavior_tree = build_behavior_tree()
+	var tree := get_behavior_tree()
 
 	var blackboard := Blackboard.new()
 	var scene_root: Node = get_tree().current_scene
 	if scene_root == null:
 		scene_root = get_tree().root
-	var instance: BTInstance = _behavior_tree.instantiate(self, blackboard, self, scene_root)
+	var instance: BTInstance = tree.instantiate(self, blackboard, self, scene_root)
 	if instance == null:
 		push_error("BotController: behaviour tree instantiation failed")
 		return
 	instance.update(0.0)
+
+
+## The authored .tres is the tree the game actually runs. Building in code is
+## only a fallback for bots created outside a scene (balance_sim) and the source
+## used by the resource generator.
+func get_behavior_tree() -> BehaviorTree:
+	if _behavior_tree == null:
+		_behavior_tree = load(BEHAVIOR_TREE_PATH) as BehaviorTree
+		if _behavior_tree == null:
+			push_warning("BotController: missing %s, building the tree in code" % BEHAVIOR_TREE_PATH)
+			_behavior_tree = build_behavior_tree()
+	return _behavior_tree
 
 
 func build_behavior_tree() -> BehaviorTree:
@@ -126,7 +134,9 @@ func build_behavior_tree() -> BehaviorTree:
 	var root := BTSequence.new()
 	root.set_custom_name("Elf turn")
 	root.add_child(BTRecruitTask.new())
-	root.add_child(BTAmbushTask.new())
+	# preload avoids depending on the editor's global class cache for the newly
+	# extracted leaf, which a fresh headless process has not scanned yet.
+	root.add_child(preload("res://scripts/ai/tasks/bt_ambush_task.gd").new())
 
 	# Attack and advance both run every turn. Making them alternatives let one
 	# available battle suppress all expansion, which produced fronts that never

@@ -1,0 +1,30 @@
+[gd_resource type="BehaviorTree" format=3]
+
+[ext_resource type="Script" path="res://scripts/ai/tasks/bt_recruit_task.gd" id="1_euxnv"]
+[ext_resource type="Script" path="res://scripts/ai/tasks/bt_ambush_task.gd" id="2_vsspg"]
+[ext_resource type="Script" path="res://scripts/ai/tasks/bt_attack_task.gd" id="3_l3vmh"]
+[ext_resource type="Script" path="res://scripts/ai/tasks/bt_advance_task.gd" id="4_33rob"]
+
+[sub_resource type="BTAction" id="BTAction_js6xe"]
+script = ExtResource("1_euxnv")
+
+[sub_resource type="BTAction" id="BTAction_4ausb"]
+script = ExtResource("2_vsspg")
+
+[sub_resource type="BTAction" id="BTAction_1o0ld"]
+script = ExtResource("3_l3vmh")
+
+[sub_resource type="BTAction" id="BTAction_k60yq"]
+script = ExtResource("4_33rob")
+
+[sub_resource type="BTSequence" id="BTSequence_kja8g"]
+custom_name = "Attack, then advance"
+children = [SubResource("BTAction_1o0ld"), SubResource("BTAction_k60yq")]
+
+[sub_resource type="BTSequence" id="BTSequence_0pc4c"]
+custom_name = "Elf turn"
+children = [SubResource("BTAction_js6xe"), SubResource("BTAction_4ausb"), SubResource("BTSequence_kja8g")]
+
+[resource]
+description = "Elf turn: recruit, attack, then advance wherever ground is open."
+root_task = SubResource("BTSequence_0pc4c")
