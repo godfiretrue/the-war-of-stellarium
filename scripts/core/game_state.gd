@@ -510,8 +510,7 @@ func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary)
 	# An army that has marched into a wildland may keep marching even when that
 	# corridor follows a city held by someone else. It still owns no ground and
 	# cannot recruit or defend there.
-	if not origin.is_owned_by(faction) \
-			and not (origin.is_wildland() and origin.has_troops_of(faction)):
+	if not origin.can_order_from(faction):
 		return _fail("%s is not yours" % origin.display_name)
 	if _has_queued_ambush(faction, from_id):
 		return _fail("%s already has an ambush order this turn" % origin.display_name)
@@ -526,7 +525,8 @@ func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary)
 		var count := int(units[unit_id])
 		if count <= 0:
 			continue
-		if int(origin.garrison.get(unit_id, 0)) < count:
+		# A shared wildland can hold both factions' units; only ours may march.
+		if origin.troops_of_type(faction, unit_id) < count:
 			return _fail("not enough %s in %s" % [unit_id, origin.display_name])
 		moving[unit_id] = count
 		moving_total += count
@@ -538,7 +538,7 @@ func queue_move(faction: int, from_id: String, to_id: String, units: Dictionary)
 	# twice, even though the garrison itself is not mutated while planning.
 	var committed := _queued_move_units(faction, from_id)
 	for unit_id: String in moving.keys():
-		if int(committed.get(unit_id, 0)) + int(moving[unit_id]) > int(origin.garrison.get(unit_id, 0)):
+		if int(committed.get(unit_id, 0)) + int(moving[unit_id]) > origin.troops_of_type(faction, unit_id):
 			return _fail("not enough %s in %s" % [unit_id, origin.display_name])
 
 	var hostile := not target.is_owned_by(faction) and target.defence_troops() > 0
@@ -638,9 +638,9 @@ func queue_ambush(faction: int, province_id: String) -> Dictionary:
 	var province := map_state.get_province(province_id)
 	if province == null:
 		return _fail("unknown province")
-	if not province.is_owned_by(faction):
+	if not province.can_order_from(faction):
 		return _fail("%s is not yours" % province.display_name)
-	if not province.can_ambush():
+	if not province.can_ambush() or not province.has_troops_of(faction):
 		return _fail("%s cannot hide an army here" % province.display_name)
 	if _has_queued_ambush(faction, province_id) or has_move_order(faction, province_id):
 		return _fail("%s already has an order this turn" % province.display_name)

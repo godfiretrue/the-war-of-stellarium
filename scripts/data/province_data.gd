@@ -71,16 +71,39 @@ func is_owned_by(faction: int) -> bool:
 	return owner_faction == faction
 
 
-## A marching army in a wildland sees the ground it stands on, even though the
-## corridor is owned by a city it has not captured.
-func has_troops_of(faction: int) -> bool:
+## Troops of one faction standing here. Wildland corridors can hold armies of
+## both sides after a contested march, so troop counts must be faction-scoped.
+func troops_of(faction: int) -> int:
+	var total := 0
 	for unit_id: String in garrison.keys():
-		if int(garrison[unit_id]) <= 0:
+		var count := int(garrison[unit_id])
+		if count <= 0:
 			continue
 		var unit := UnitCatalog.get_unit(unit_id)
 		if unit != null and unit.faction == faction:
-			return true
-	return false
+			total += count
+	return total
+
+
+## Troops of one faction for a specific unit type, or zero if that type belongs
+## to somebody else (an enemy stack sharing a wildland, for instance).
+func troops_of_type(faction: int, unit_id: String) -> int:
+	var unit := UnitCatalog.get_unit(unit_id)
+	if unit == null or unit.faction != faction:
+		return 0
+	return maxi(int(garrison.get(unit_id, 0)), 0)
+
+
+## A marching army in a wildland sees the ground it stands on, even though the
+## corridor is owned by a city it has not captured.
+func has_troops_of(faction: int) -> bool:
+	return troops_of(faction) > 0
+
+
+## Owned ground, or a wildland corridor holding one of this faction's armies.
+## Both marching and ambushing are allowed from either.
+func can_order_from(faction: int) -> bool:
+	return is_owned_by(faction) or (is_wildland() and has_troops_of(faction))
 
 
 func total_troops() -> int:

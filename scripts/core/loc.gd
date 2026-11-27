@@ -140,6 +140,7 @@ const STRINGS := {
 		"battle_focus_tip": "Clica para centrar o mapa nesta batalha.",
 		"reason_no_selection": "Seleciona uma província tua.",
 		"reason_not_owned": "A província não é tua.",
+		"reason_no_own_troops": "Não tens tropas nesta província.",
 		"reason_not_planning": "Aguarda o teu turno de planeamento.",
 
 		# --- HUD: hints -------------------------------------------------
@@ -351,6 +352,7 @@ const STRINGS := {
 		"battle_focus_tip": "Click to centre the map on this battle.",
 		"reason_no_selection": "Select one of your provinces.",
 		"reason_not_owned": "That province is not yours.",
+		"reason_no_own_troops": "You have no troops in this province.",
 		"reason_not_planning": "Wait for your planning turn.",
 
 		# --- HUD: hints -------------------------------------------------
@@ -555,6 +557,11 @@ static func reason(raw: String) -> String:
 	text = text.replace(" is lying in ambush and cannot march", " está em emboscada e não pode marchar")
 	text = text.replace(" is lying in ambush and cannot recruit", " está em emboscada e não pode recrutar")
 	text = text.replace(" already has an order this turn", " já tem uma ordem neste turno")
+	text = text.replace(
+		" already has an ambush order this turn",
+		" já tem uma ordem de emboscada neste turno"
+	)
+	text = text.replace("not enough ", "não há ")
 	text = text.replace("need ", "faltam ")
 	text = text.replace(" gold and ", " de ouro e ")
 	text = text.replace(" manpower", " de mão-de-obra")

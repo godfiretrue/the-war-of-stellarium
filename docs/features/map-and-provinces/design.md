@@ -10,7 +10,7 @@ O mapa é gerado por seed e divide-se em províncias com terreno, dono e guarni�
 2. O grafo tem sempre 21 províncias ligadas, com âncoras garantidas: duas capitais, fortalezas e um nó fluvial. O bloco inicial de cada facção é ligado, com 5 a 8 províncias.
 3. Há cinco terrenos — Planície, Floresta, Costa, Montanha e Terras Altas (*Highlands*) — e fortaleza é um papel sobreposto ao terreno, não um bioma extra.
 3b. As províncias montanhosas mais altas são **picos intransponíveis**: a geração remove todas as arestas que tocam um pico, e nenhuma ordem pode entrar ou sair dele. As capitais e os passos fortificados ficam isentos; se remover um pico desligasse o continente, a geração usa menos picos. A vitória total conta apenas províncias transitáveis.
-4. Cada ermo segue a cidade mais próxima: conquistar a cidade vira o seu hinterland sem luta, sem agitação e sem rendimento. Ermos não têm milícia, não defendem e não recrutam; servem apenas de passagem para ambos os lados.
+4. Cada ermo segue a cidade mais próxima: conquistar a cidade vira o seu hinterland sem luta, sem agitação e sem rendimento. Ermos não têm milícia, não defendem e não recrutam; servem apenas de passagem para ambos os lados. `ProvinceData.can_order_from()` permite continuar a marchar e preparar emboscadas a partir de um ermo onde o exército está, mesmo que a cidade de influência seja inimiga; só as tropas da própria facção podem ser usadas nessas ordens.
 5. O rendimento usa os valores base do terreno nas cidades, mais bónus de capital e modificador de facção; um recurso de facção é produzido por turno conforme o terreno. Fortalezas custam 4 de ouro por turno mesmo durante agitação, e somam +0,25 à defesa.
 6. `MapView` desenha e faz hit-test; nunca altera o estado do jogo.
 

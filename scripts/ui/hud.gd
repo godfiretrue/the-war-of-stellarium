@@ -494,9 +494,9 @@ func _refresh_garrison(province: ProvinceData) -> void:
 		if count <= 0:
 			continue
 		var unit := UnitCatalog.get_unit(unit_id)
-		var unit_color := UiStyle.faction_color(province.owner_faction)
-		if unit != null:
-			unit_color = unit_color.lerp(UiStyle.GOLD, 0.15)
+		# The unit's own colour matters in a wildland shared by both armies.
+		var color_faction := unit.faction if unit != null else province.owner_faction
+		var unit_color := UiStyle.faction_color(color_faction).lerp(UiStyle.GOLD, 0.15)
 		var tooltip := "%s × %d" % [Loc.unit_name(unit_id), count]
 		if unit != null:
 			tooltip = "%s\n%s %d · %s %d" % [
@@ -577,19 +577,25 @@ func _refresh_buttons() -> void:
 
 	var province := _selected_province()
 	var owned: bool = province != null and province.is_owned_by(PLAYER)
-	var can_march := player_planning and owned and province.total_troops() > 0
+	# An army standing in a corridor follows the city that owns it, but can still
+	# march on and hide an ambush there (GameState enforces the same rule).
+	var commandable: bool = province != null and province.can_order_from(PLAYER)
+	var own_troops: int = province.troops_of(PLAYER) if province != null else 0
+	var can_march := player_planning and commandable and own_troops > 0
 	_march.disabled = not can_march
-	_march.tooltip_text = _march_reason(player_planning, province, owned)
+	_march.tooltip_text = _march_reason(player_planning, province, commandable, own_troops)
 
 	var ambush_busy := province != null and (
 		game.has_move_order(PLAYER, province.id)
 		or game.has_recruit_order(PLAYER, province.id)
 		or game.has_ambush_order(PLAYER, province.id)
 	)
-	var ambush_ready := player_planning and owned and province != null \
-		and province.can_ambush() and not ambush_busy
+	var ambush_ready := player_planning and commandable and province != null \
+		and province.can_ambush() and own_troops > 0 and not ambush_busy
 	_ambush.disabled = not ambush_ready
-	_ambush.tooltip_text = _ambush_reason(player_planning, province, owned, ambush_busy)
+	_ambush.tooltip_text = _ambush_reason(
+		player_planning, province, commandable, ambush_busy, own_troops
+	)
 
 	# March is the expected next step while a move is armed; otherwise ending the
 	# turn is. Only one of them wears the gold primary style at a time.
@@ -678,30 +684,35 @@ func _refresh_buttons() -> void:
 				]
 
 
-func _march_reason(player_planning: bool, province: ProvinceData, owned: bool) -> String:
+func _march_reason(
+	player_planning: bool, province: ProvinceData, commandable: bool, own_troops: int
+) -> String:
 	if not player_planning:
 		return Loc.t("reason_not_planning")
 	if province == null:
 		return Loc.t("reason_no_selection")
-	if not owned:
+	if not commandable:
 		return Loc.t("reason_not_owned")
-	if province.total_troops() <= 0:
-		return Loc.t("hint_no_troops")
+	if own_troops <= 0:
+		return Loc.t("reason_no_own_troops")
 	return Loc.t("tip_march")
 
 
-func _ambush_reason(player_planning: bool, province: ProvinceData, owned: bool, busy: bool) -> String:
+func _ambush_reason(
+	player_planning: bool, province: ProvinceData, commandable: bool,
+	busy: bool, own_troops: int
+) -> String:
 	if not player_planning:
 		return Loc.t("reason_not_planning")
 	if province == null:
 		return Loc.t("reason_no_selection")
-	if not owned:
+	if not commandable:
 		return Loc.t("reason_not_owned")
 	if province.ambush:
 		return Loc.t("ambush_reason_active")
 	if busy:
 		return Loc.t("ambush_reason_busy")
-	if province.total_troops() <= 0:
+	if own_troops <= 0:
 		return Loc.t("ambush_reason_troops")
 	if not province.is_ambush_ground():
 		return Loc.t("ambush_reason_ground")
@@ -791,15 +802,15 @@ func _on_march_pressed() -> void:
 		return
 
 	var province := _selected_province()
-	if province == null or not province.is_owned_by(PLAYER):
+	if province == null or not province.can_order_from(PLAYER):
 		return
-	if province.total_troops() <= 0:
-		_show_toast(Loc.t("hint_no_troops"))
+	if province.troops_of(PLAYER) <= 0:
+		_show_toast(Loc.t("reason_no_own_troops"))
 		return
 
 	march_origin_id = selected_province_id
 	_show_toast(Loc.t("hint_march"))
-	_open_march_panel(province.total_troops())
+	_open_march_panel(province.troops_of(PLAYER))
 	if map_view != null:
 		map_view.set_march_targets(PackedStringArray(province.neighbors), province.id)
 	_refresh_buttons()
@@ -883,8 +894,8 @@ func _handle_march_click(target_id: String) -> void:
 		return
 
 	var origin := map.get_province(origin_id)
-	var wanted := mini(int(_march_count.value), origin.total_troops())
-	var result := game.queue_move(PLAYER, origin_id, target_id, _units_for_count(origin.garrison, wanted))
+	var wanted := mini(int(_march_count.value), origin.troops_of(PLAYER))
+	var result := game.queue_move(PLAYER, origin_id, target_id, _units_for_count(origin, wanted))
 	_cancel_march()
 
 	if not bool(result.get("ok", false)):
@@ -963,9 +974,9 @@ func _refresh_preview(target_id: String) -> void:
 		_preview_note.text = Loc.t("preview_low_intel")
 		return
 
-	var wanted := mini(int(_march_count.value), origin.total_troops())
+	var wanted := mini(int(_march_count.value), origin.troops_of(PLAYER))
 	var prediction := CombatResolver.predict(
-		_units_for_count(origin.garrison, wanted), target, PLAYER
+		_units_for_count(origin, wanted), target, PLAYER
 	)
 	if bool(prediction["undefended"]):
 		_preview_note.text = Loc.t("preview_free")
@@ -989,15 +1000,16 @@ func _refresh_preview(target_id: String) -> void:
 	_preview_note.text = Loc.t("preview_note")
 
 
-## The first `count` troops of a garrison, used for partial marches. Unit order
-## is stable, so the same count always sends the same stack.
-func _units_for_count(garrison: Dictionary, count: int) -> Dictionary:
+## The first `count` of our own troops in a province, used for partial marches.
+## Unit order is stable, so the same count always sends the same stack. Enemy
+## units sharing a wildland corridor are never picked.
+func _units_for_count(province: ProvinceData, count: int) -> Dictionary:
 	var sending: Dictionary = {}
 	var remaining: int = maxi(count, 0)
-	for unit_id: String in garrison.keys():
+	for unit_id: String in province.garrison.keys():
 		if remaining <= 0:
 			break
-		var take: int = mini(int(garrison[unit_id]), remaining)
+		var take: int = mini(province.troops_of_type(PLAYER, unit_id), remaining)
 		if take > 0:
 			sending[unit_id] = take
 			remaining -= take

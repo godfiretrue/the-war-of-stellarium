@@ -41,9 +41,11 @@ func _run() -> void:
 	# Same army, same seed: only the ambush flag differs.
 	var plain := ProvinceData.new()
 	plain.terrain = Balance.Terrain.HIGHLANDS
+	plain.is_city = true
 	plain.garrison = {"elf_riflemen": 4}
 	var hidden := ProvinceData.new()
 	hidden.terrain = Balance.Terrain.HIGHLANDS
+	hidden.is_city = true
 	hidden.garrison = {"elf_riflemen": 4}
 	hidden.ambush = true
 	var seed_rng := RandomNumberGenerator.new()

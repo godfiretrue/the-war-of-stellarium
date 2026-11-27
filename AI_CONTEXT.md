@@ -188,6 +188,16 @@ bar, a province dock at the bottom centre and panels on the screen edges.
   with no unrest. Wildlands never produce or raise militia and never defend —
   except for an ambush hidden there, which springs when an enemy marches in
   without ever capturing the corridor.
+- `ProvinceData.can_order_from()` is the single gate for marching **and**
+  ambushing: owned ground, or a wildland holding this faction's own troops.
+  A corridor owned by an enemy influence city is therefore still commandable
+  by an army standing in it. `troops_of()` / `troops_of_type()` keep counts
+  faction-scoped because both armies can share a corridor (`GameState.queue_move()`
+  uses them so the player cannot march enemy units). The HUD uses the same
+  helpers for its March/Ambush buttons; do not gate those on plain ownership.
+  `BotController.ambush_phase()` deliberately keeps its own ambushes on owned
+  ground: letting the bot hide in corridors moved the 60-seed split from
+  52/48 to 38/62, so the wider player permission is not mirrored by the AI.
 - Income at resolution: per-terrain base gold/manpower (Plains 13/10, Forest
   12/6, Coast 20/2, Mountains 19/4), capital +8/+2, faction resource (Humans:
   Aether on plains, forest and coast; Elves: Iron on mountains) +2. A fortress
@@ -290,6 +300,11 @@ G=moisture, B=temperature) to `shaders/terrain.gdshader`, which paints sea,
 biomes, hill-shaded relief, rock and snow. Rivers and march routes are drawn by
 `_draw_overlay` on a node above the provinces. `province_view.gd` only adds
 ownership tint, borders and markers.
+
+Order gates are checked headlessly by `scripts/tools/ambush_check.gd` and
+`scripts/tools/wildland_order_check.gd` (the latter covers marching out of and
+ambushing in a corridor whose influence city belongs to the enemy). Run both
+after changing `queue_move()` / `queue_ambush()` or the HUD action buttons.
 
 Invariants are checked by `scripts/tools/worldgen_sweep.gd` (24 seeds at 1x,
 1.5x and 2x, exits 1 on failure):

@@ -202,8 +202,12 @@ func ambush_phase() -> void:
 	for province in _stacks():
 		if placed >= cap:
 			break
-		# Wildlands are the best place to wait: an enemy marching through does
-		# not expect an army in ground that cannot defend itself.
+		# The player may hide an army in any corridor it occupies, but the bot
+		# sticks to ground it owns: allowing corridor ambushes shifted the
+		# measured 60-seed split from 52/48 to 38/62. Keep the bot on its
+		# validated doctrine even though GameState now permits both.
+		if province.is_wildland() and not province.is_owned_by(bot_faction):
+			continue
 		if not province.can_ambush() or not _borders_enemy(province):
 			continue
 		if game.has_move_order(bot_faction, province.id):
